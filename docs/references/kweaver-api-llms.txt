@@ -1,0 +1,10 @@
+# KWeaver API — LLM context stub
+
+Use this file to paste excerpts from official KWeaver API documentation (OpenAPI paths, auth headers, business domain headers).
+
+Suggested sections to add:
+- Base URL and versioning
+- Authorization: Bearer token, x-business-domain if required
+- user-management endpoints
+- deploy-manager endpoints
+- eacp / observability endpoints

@@ -1,0 +1,13 @@
+# deploy-web role reference (summary)
+
+Extracted from kweaver-ai/studio deploy-web:
+
+UserRole strings:
+- super_admin, sys_admin, sec_admin, audit_admin, org_manager, org_audit, normal_user
+
+SystemRoleType UUIDs map to UserRole in src/lib/types.ts (see TypeScript enums).
+
+Example API:
+GET /api/user-management/v1/users/{userid}/roles
+
+Built-in accounts (三权分立): system, admin, security, audit
