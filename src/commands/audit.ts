@@ -1,14 +1,14 @@
 import type { Command } from "commander";
 import { ApiClient } from "../lib/api-client";
 import { loadConfig } from "../lib/config";
-import { resolveBaseUrl } from "../lib/auth";
+import { resolveCliBaseUrl } from "../lib/resolve-cli-base-url";
+import { wantsJsonOutput } from "../lib/cli-json";
 import { printColumns, printJson } from "../utils/output";
 import { exitUserError } from "../utils/errors";
 
 function client(program: Command): ApiClient {
-  const opts = program.opts<{ baseUrl?: string }>();
   const config = loadConfig();
-  const baseUrl = opts.baseUrl ?? resolveBaseUrl(config);
+  const baseUrl = resolveCliBaseUrl(program, config);
   return new ApiClient({ baseUrl, config });
 }
 
@@ -24,7 +24,7 @@ export function registerAuditCommands(program: Command): void {
     .option("--end <iso>", "Filter end time (ISO 8601)")
     .description("List login audit events")
     .action(async (opts: { page: string; size: string; user?: string; start?: string; end?: string }) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       if (!c.hasToken()) {
         exitUserError(
@@ -63,10 +63,16 @@ export function registerAuditCommands(program: Command): void {
               row.ip ?? "-",
             ];
           }),
+          { emptyHint: "No audit logs found for the given filters." },
         );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        exitUserError(`Failed to fetch audit logs: ${msg}`);
+        const hint =
+          /terminated|aborted|timeout/i.test(msg)
+            ? "\n\nHint: The login-log service did not finish in time (or closed the connection). " +
+              "Retry later, try a smaller --size, or check gateway/EACP availability on this cluster."
+            : "";
+        exitUserError(`Failed to fetch audit logs: ${msg}${hint}`);
       }
     });
 }

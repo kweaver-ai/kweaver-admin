@@ -1,5 +1,7 @@
 # kweaver-admin
 
+English | [中文](README.zh.md)
+
 CLI for KWeaver administrators: users, roles, audit, models, and local config. See [AGENTS.md](AGENTS.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Requirements

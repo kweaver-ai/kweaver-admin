@@ -34,13 +34,15 @@ kweaver-admin
   config show|set
 ```
 
-Global options: `--json` for machine-readable output where supported.
+Global options: `--json` for machine-readable output where supported. Subcommands must read it via `optsWithGlobals()` (see `lib/cli-json.ts` `wantsJsonOutput`); `call`/`curl` bypass Commander — see `lib/call-route.ts` and `wantsJsonFromArgv`. Spec: [docs/superpowers/specs/2026-04-20-cli-json-global.md](docs/superpowers/specs/2026-04-20-cli-json-global.md).
 
 ## Modules
 
 - `commands`: Parse argv, validate options, call lib, print via utils.
 - `lib/api-client`: Base URL, headers, error handling, `fetch` wrapper.
 - `lib/auth`: Resolve base URL and admin token state (env -> `~/.kweaver-admin/platforms`).
+- `lib/cli-json`: Global `--json` detection for Commander actions (`wantsJsonOutput`) and raw argv (`wantsJsonFromArgv`).
+- `lib/call-route`: Locate `call`/`curl` in argv when global flags precede the keyword.
 - `lib/types`: `UserRole`, `SystemRoleType`, and shared DTOs.
 - `utils/output`: Plain aligned columns vs JSON.
 - `utils/errors`: User-facing messages, exit codes.

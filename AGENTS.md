@@ -61,7 +61,7 @@ Avoid `any`; prefer explicit types and `unknown` with narrowing.
 
 ## CLI conventions
 
-- Global options: **`--json`**, **`--base-url`** (see `src/index.ts`).
+- Global options: **`--json`**, **`--base-url`** (see `src/index.ts`). Behavior and pitfalls: [docs/superpowers/specs/2026-04-20-cli-json-global.md](docs/superpowers/specs/2026-04-20-cli-json-global.md).
 - Subcommands: `verb` + `noun` groups (`user list`, `role list`, …); keep help text consistent with Commander’s `--help`.
 - For arbitrary HTTP while debugging, operators may use **`kweaver call`** from the SDK; this repo’s `api-client` should implement stable admin operations as first-class commands.
 

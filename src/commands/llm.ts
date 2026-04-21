@@ -2,15 +2,15 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { ApiClient } from "../lib/api-client";
 import { loadConfig } from "../lib/config";
-import { resolveBaseUrl } from "../lib/auth";
+import { resolveCliBaseUrl } from "../lib/resolve-cli-base-url";
+import { wantsJsonOutput } from "../lib/cli-json";
 import { exitUserError } from "../utils/errors";
 import { printColumns, printJson } from "../utils/output";
 import type { LlmModel } from "../lib/types";
 
 function client(program: Command): ApiClient {
-  const opts = program.opts<{ baseUrl?: string }>();
   const config = loadConfig();
-  const baseUrl = opts.baseUrl ?? resolveBaseUrl(config);
+  const baseUrl = resolveCliBaseUrl(program, config);
   return new ApiClient({ baseUrl, config });
 }
 
@@ -38,7 +38,7 @@ export function registerLlmCommands(program: Command): void {
     .option("--name <name>", "Filter by model name")
     .description("List LLM models")
     .action(async (opts: { page: string; size: string; series?: string; name?: string }) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -58,6 +58,7 @@ export function registerLlmCommands(program: Command): void {
             m.model_conf?.api_model ?? "-",
             m.update_time ?? "-",
           ]),
+          { emptyHint: "No LLM models configured. Use `kweaver-admin llm add` to register one." },
         );
       } catch (e) {
         exitUserError(e instanceof Error ? e.message : String(e));
@@ -69,7 +70,7 @@ export function registerLlmCommands(program: Command): void {
     .argument("<modelId>", "Model id")
     .description("Get LLM model details")
     .action(async (modelId: string) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -99,7 +100,7 @@ export function registerLlmCommands(program: Command): void {
         apiKey: string;
         icon?: string;
       }) => {
-        const json = program.opts<{ json?: boolean }>().json === true;
+        const json = wantsJsonOutput(program);
         const c = client(program);
         requireToken(c);
         try {
@@ -128,7 +129,7 @@ export function registerLlmCommands(program: Command): void {
     .option("--icon <url>", "Icon URL")
     .description("Edit LLM model")
     .action(async (modelId: string, opts: { name?: string; icon?: string }) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -145,7 +146,7 @@ export function registerLlmCommands(program: Command): void {
     .argument("<modelId...>", "Model ids")
     .description("Delete LLM model(s)")
     .action(async (modelIds: string[]) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -162,7 +163,7 @@ export function registerLlmCommands(program: Command): void {
     .argument("<modelId>", "Model id")
     .description("Test LLM model")
     .action(async (modelId: string) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {

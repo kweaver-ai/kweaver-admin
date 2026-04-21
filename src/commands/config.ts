@@ -5,6 +5,7 @@ import {
   loadConfig,
   saveConfig,
 } from "../lib/config";
+import { wantsJsonOutput } from "../lib/cli-json";
 import { printJson } from "../utils/output";
 import { exitUserError } from "../utils/errors";
 
@@ -15,7 +16,7 @@ export function registerConfigCommands(program: Command): void {
     .command("show")
     .description("Show current config (~/.kweaver-admin/config.json)")
     .action(() => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = loadConfig();
       if (json) {
         printJson({ ...c, path: getConfigPath() });

@@ -31,7 +31,13 @@ function writeJsonFile(path: string, data: unknown): void {
 }
 
 export function readToken(adminDir: string, url: string): TokenConfig | undefined {
-  return readJsonFile<TokenConfig>(join(platformDir(adminDir, url), "token.json"));
+  const raw = readJsonFile<TokenConfig>(join(platformDir(adminDir, url), "token.json"));
+  if (!raw) return undefined;
+  if (raw.tlsInsecure === undefined && raw.insecure !== undefined) {
+    const { insecure: _legacy, ...rest } = raw;
+    return { ...rest, tlsInsecure: _legacy };
+  }
+  return raw;
 }
 
 export function writeToken(adminDir: string, url: string, token: TokenConfig): void {
@@ -57,4 +63,26 @@ export function readState(adminDir: string): AdminState | undefined {
 
 export function writeState(adminDir: string, state: AdminState): void {
   writeJsonFile(join(adminDir, "state.json"), state);
+}
+
+/** Per-platform non-auth settings (aligned with kweaver-sdk `platforms/<id>/config.json`). */
+export type PlatformStoredConfig = {
+  businessDomain?: string;
+};
+
+export function readPlatformConfig(adminDir: string, url: string): PlatformStoredConfig | undefined {
+  return readJsonFile<PlatformStoredConfig>(join(platformDir(adminDir, url), "config.json"));
+}
+
+export function writePlatformConfig(adminDir: string, url: string, config: PlatformStoredConfig): void {
+  writeJsonFile(join(platformDir(adminDir, url), "config.json"), config);
+}
+
+export function savePlatformBusinessDomain(adminDir: string, url: string, businessDomain: string): void {
+  const existing = readPlatformConfig(adminDir, url) ?? {};
+  writePlatformConfig(adminDir, url, { ...existing, businessDomain });
+}
+
+export function loadPlatformBusinessDomain(adminDir: string, url: string): string | undefined {
+  return readPlatformConfig(adminDir, url)?.businessDomain?.trim();
 }

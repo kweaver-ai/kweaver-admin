@@ -2,15 +2,15 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { ApiClient } from "../lib/api-client";
 import { loadConfig } from "../lib/config";
-import { resolveBaseUrl } from "../lib/auth";
+import { resolveCliBaseUrl } from "../lib/resolve-cli-base-url";
+import { wantsJsonOutput } from "../lib/cli-json";
 import { exitUserError } from "../utils/errors";
 import { printColumns, printJson } from "../utils/output";
 import type { SmallModel } from "../lib/types";
 
 function client(program: Command): ApiClient {
-  const opts = program.opts<{ baseUrl?: string }>();
   const config = loadConfig();
-  const baseUrl = opts.baseUrl ?? resolveBaseUrl(config);
+  const baseUrl = resolveCliBaseUrl(program, config);
   return new ApiClient({ baseUrl, config });
 }
 
@@ -38,7 +38,7 @@ export function registerSmallModelCommands(program: Command): void {
     .option("--name <name>", "Filter by model name")
     .description("List small models")
     .action(async (opts: { page: string; size: string; type?: string; name?: string }) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -58,6 +58,7 @@ export function registerSmallModelCommands(program: Command): void {
             m.model_config?.api_model ?? "-",
             m.update_time ?? "-",
           ]),
+          { emptyHint: "No small models configured. Use `kweaver-admin small-model add` to register one." },
         );
       } catch (e) {
         exitUserError(e instanceof Error ? e.message : String(e));
@@ -69,7 +70,7 @@ export function registerSmallModelCommands(program: Command): void {
     .argument("<modelId>", "Model id")
     .description("Get small model details")
     .action(async (modelId: string) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -103,7 +104,7 @@ export function registerSmallModelCommands(program: Command): void {
         maxTokens: string;
         embeddingDim: string;
       }) => {
-        const json = program.opts<{ json?: boolean }>().json === true;
+        const json = wantsJsonOutput(program);
         const c = client(program);
         requireToken(c);
         try {
@@ -135,7 +136,7 @@ export function registerSmallModelCommands(program: Command): void {
     .option("--api-model <model>", "API model")
     .description("Edit small model")
     .action(async (modelId: string, opts: { name?: string; apiUrl?: string; apiModel?: string }) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -162,7 +163,7 @@ export function registerSmallModelCommands(program: Command): void {
     .argument("<modelId...>", "Model ids")
     .description("Delete small model(s)")
     .action(async (modelIds: string[]) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {
@@ -179,7 +180,7 @@ export function registerSmallModelCommands(program: Command): void {
     .argument("<modelId>", "Model id")
     .description("Test small model")
     .action(async (modelId: string) => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const c = client(program);
       requireToken(c);
       try {

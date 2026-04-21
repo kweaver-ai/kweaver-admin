@@ -1,16 +1,59 @@
 import { exec } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import chalk from "chalk";
 import { describeAuthState, getAdminDir, resolveBaseUrl, resolveToken } from "../lib/auth";
-import { deleteToken, readState, writeState, writeToken } from "../lib/platforms";
+import { persistSessionAfterLogin } from "../lib/persist-login";
+import { eacpModifyPassword } from "../lib/eacp";
+import { decodeJwtPayload } from "../lib/jwt";
+import {
+  deleteToken,
+  loadPlatformBusinessDomain,
+  readClient,
+  readState,
+  readToken,
+  writeClient,
+  writeState,
+  writeToken,
+} from "../lib/platforms";
 import {
   buildAuthorizeUrl,
-  DEFAULT_CLIENT_ID,
   DEFAULT_REDIRECT_PORT,
+  DEFAULT_SCOPE,
   exchangeCodeForToken,
+  formatHttpError,
+  generatePkce,
+  normalizeBaseUrl,
+  passwordSigninLogin,
+  promptForCode,
+  resolveOrRegisterClient,
   startCallbackServer,
 } from "../lib/oauth";
+import type { TokenConfig } from "../lib/types";
+import { wantsJsonOutput } from "../lib/cli-json";
 import { printJson } from "../utils/output";
+
+interface LoginOpts {
+  token?: string;
+  clientId?: string;
+  clientSecret?: string;
+  port?: string;
+  username?: string;
+  password?: string;
+  signinPublicKeyFile?: string;
+  product?: string;
+  /** Present when `--no-browser` is passed (Commander naming). */
+  noBrowser?: boolean;
+  /** Commander may set `browser: false` for `--no-browser` (negated flag). */
+  browser?: boolean;
+}
+
+/** Commander may expose `--no-browser` as `noBrowser: true` or `browser: false`. */
+function isNoBrowserLogin(opts: LoginOpts): boolean {
+  if (opts.noBrowser === true) return true;
+  return opts.browser === false;
+}
 
 export function registerAuthCommands(program: Command): void {
   const auth = program
@@ -20,25 +63,130 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("login")
     .argument("[url]", "Platform URL (e.g. https://kweaver.example.com)")
-    .option("--token <token>", "Provide token directly (for CI/headless)")
-    .description("Log in to platform (stores admin token in ~/.kweaver-admin)")
-    .action(async (url?: string, loginOpts?: { token?: string }) => {
-      const baseUrl =
-        url ?? program.opts<{ baseUrl?: string }>().baseUrl ?? resolveBaseUrl();
+    .option("--token <token>", "Provide token directly (CI / headless)")
+    .option(
+      "--client-id <id>",
+      "Use an existing OAuth2 client_id instead of dynamic registration",
+    )
+    .option("--client-secret <secret>", "OAuth2 client secret (omit for public/PKCE clients)")
+    .option("--port <n>", `Local callback port (default ${DEFAULT_REDIRECT_PORT})`)
+    .option("-u, --username <name>", "Username for HTTP /oauth2/signin password login")
+    .option("-p, --password <password>", "Password for HTTP /oauth2/signin password login")
+    .option(
+      "--signin-public-key-file <path>",
+      "Override RSA public key (PEM) for /oauth2/signin password encryption",
+    )
+    .option("--product <name>", "OAuth product query (default 'adp', some deployments use 'dip')")
+    .option(
+      "--no-browser",
+      "Do not open a browser; paste authorization code from stdin (headless servers)",
+    )
+    .description(
+      "Log in to platform (browser OAuth2 by default; -u/-p uses HTTP /oauth2/signin)",
+    )
+    .action(async (url: string | undefined, loginOpts: LoginOpts) => {
+      const globals = program.optsWithGlobals<{ baseUrl?: string }>();
+      const rawBase =
+        url?.trim() || globals.baseUrl?.trim() || resolveBaseUrl();
+      const baseUrl = normalizeBaseUrl(rawBase);
+      const adminDir = getAdminDir();
+      const tlsLogin =
+        program.optsWithGlobals<{ insecure?: boolean }>().insecure === true ||
+        /^(1|true)$/i.test(process.env.KWEAVER_TLS_INSECURE ?? "");
+      const mergeLoginTls = (token: TokenConfig): TokenConfig =>
+        tlsLogin ? { ...token, tlsInsecure: true } : token;
 
-      if (loginOpts?.token) {
-        writeToken(getAdminDir(), baseUrl, { accessToken: loginOpts.token });
-        writeState(getAdminDir(), { currentPlatform: baseUrl });
+      // 1. Static token: skip OAuth entirely
+      if (loginOpts.token) {
+        const tok = mergeLoginTls({ accessToken: loginOpts.token });
+        writeToken(adminDir, baseUrl, tok);
+        writeState(adminDir, { currentPlatform: baseUrl });
         console.log(chalk.green(`Token saved for ${baseUrl}`));
+        await persistSessionAfterLogin(program, adminDir, baseUrl, tok);
         return;
       }
 
-      const port = DEFAULT_REDIRECT_PORT;
-      const redirectUri = `http://localhost:${port}/callback`;
-      const state = Math.random().toString(36).slice(2);
-      const authorizeUrl = buildAuthorizeUrl(baseUrl, DEFAULT_CLIENT_ID, redirectUri, state);
+      if (isNoBrowserLogin(loginOpts) && (loginOpts.username || loginOpts.password)) {
+        console.error(
+          chalk.red(
+            "--no-browser cannot be combined with -u/-p (HTTP sign-in is already headless).",
+          ),
+        );
+        process.exit(1);
+      }
+
+      const port = loginOpts.port ? Number.parseInt(loginOpts.port, 10) : DEFAULT_REDIRECT_PORT;
+      if (Number.isNaN(port) || port < 1 || port > 65535) {
+        console.error(chalk.red("Invalid --port value (expected 1-65535)."));
+        process.exit(1);
+      }
+      const redirectUri = `http://127.0.0.1:${port}/callback`;
 
       try {
+        // 2. Resolve OAuth2 client (cached → preflight → re-register on stale)
+        const cached = readClient(adminDir, baseUrl);
+        const { client, reused, registered } = await resolveOrRegisterClient(
+          baseUrl,
+          redirectUri,
+          DEFAULT_SCOPE,
+          cached,
+          { clientId: loginOpts.clientId, clientSecret: loginOpts.clientSecret },
+        );
+        if (registered) {
+          console.log(chalk.dim(`Registered new OAuth2 client: ${client.clientId}`));
+        } else if (reused) {
+          console.log(chalk.dim(`Reusing OAuth2 client: ${client.clientId}`));
+        }
+        writeClient(adminDir, baseUrl, client);
+
+        const usePkce = !client.clientSecret;
+        const pkce = usePkce ? generatePkce() : null;
+
+        // 3. HTTP password sign-in (no browser, RSA-encrypted password)
+        if (loginOpts.username && loginOpts.password) {
+          const signinPem = loginOpts.signinPublicKeyFile
+            ? readFileSync(loginOpts.signinPublicKeyFile, "utf8").trim()
+            : undefined;
+          console.log(chalk.dim("Logging in via HTTP /oauth2/signin..."));
+          const token = await passwordSigninLogin(baseUrl, {
+            username: loginOpts.username,
+            password: loginOpts.password,
+            redirectUri,
+            clientId: client.clientId,
+            clientSecret: client.clientSecret || undefined,
+            codeVerifier: pkce?.verifier,
+            codeChallenge: pkce?.challenge,
+            product: loginOpts.product,
+            signinPublicKeyPem: signinPem,
+          });
+          writeToken(adminDir, baseUrl, mergeLoginTls(token));
+          writeState(adminDir, { currentPlatform: baseUrl });
+          console.log(chalk.green(`Logged in to ${baseUrl} as ${loginOpts.username}`));
+          await persistSessionAfterLogin(program, adminDir, baseUrl, mergeLoginTls(token));
+          return;
+        }
+
+        // 4. Browser OAuth2 authorization-code flow (PKCE for public clients)
+        const state = randomBytes(12).toString("hex");
+        const authorizeUrl = buildAuthorizeUrl(baseUrl, client.clientId, redirectUri, state, {
+          scope: DEFAULT_SCOPE,
+          codeChallenge: pkce?.challenge,
+          product: loginOpts.product,
+        });
+
+        if (isNoBrowserLogin(loginOpts)) {
+          const code = await promptForCode(authorizeUrl, state, port, "explicit");
+          const token = await exchangeCodeForToken(baseUrl, code, redirectUri, client.clientId, {
+            clientSecret: client.clientSecret || undefined,
+            codeVerifier: pkce?.verifier,
+          });
+          writeToken(adminDir, baseUrl, mergeLoginTls(token));
+          writeState(adminDir, { currentPlatform: baseUrl });
+          console.log(chalk.green(`Logged in to ${baseUrl}`));
+          await persistSessionAfterLogin(program, adminDir, baseUrl, mergeLoginTls(token));
+          return;
+        }
+
         const callbackPromise = startCallbackServer(port);
         const openCmd =
           process.platform === "darwin"
@@ -55,19 +203,17 @@ export function registerAuthCommands(program: Command): void {
           callback.close();
           throw new Error("OAuth state mismatch");
         }
-        const token = await exchangeCodeForToken(
-          baseUrl,
-          callback.code,
-          redirectUri,
-          DEFAULT_CLIENT_ID,
-        );
+        const token = await exchangeCodeForToken(baseUrl, callback.code, redirectUri, client.clientId, {
+          clientSecret: client.clientSecret || undefined,
+          codeVerifier: pkce?.verifier,
+        });
         callback.close();
-        writeToken(getAdminDir(), baseUrl, token);
-        writeState(getAdminDir(), { currentPlatform: baseUrl });
+        writeToken(adminDir, baseUrl, mergeLoginTls(token));
+        writeState(adminDir, { currentPlatform: baseUrl });
         console.log(chalk.green(`Logged in to ${baseUrl}`));
+        await persistSessionAfterLogin(program, adminDir, baseUrl, mergeLoginTls(token));
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(chalk.red(`Login failed: ${msg}`));
+        console.error(chalk.red(formatHttpError(e)));
         process.exit(1);
       }
     });
@@ -89,10 +235,14 @@ export function registerAuthCommands(program: Command): void {
     .command("status")
     .description("Show base URL and whether a token is configured")
     .action(() => {
-      const json = program.opts<{ json?: boolean }>().json === true;
+      const json = wantsJsonOutput(program);
       const state = describeAuthState();
       if (json) {
-        printJson(state);
+        const adminDir = getAdminDir();
+        const st = readState(adminDir);
+        const businessDomain =
+          st?.currentPlatform ? loadPlatformBusinessDomain(adminDir, st.currentPlatform) : undefined;
+        printJson({ ...state, businessDomain });
         return;
       }
       console.log("Base URL:", state.baseUrl);
@@ -102,12 +252,209 @@ export function registerAuthCommands(program: Command): void {
       if (state.tlsInsecure) {
         console.log("TLS source:", state.tlsSource);
       }
-      if (state.currentPlatform) console.log("Platform:", state.currentPlatform);
+      if (state.currentPlatform) {
+        console.log("Platform:", state.currentPlatform);
+        const bd = loadPlatformBusinessDomain(getAdminDir(), state.currentPlatform);
+        if (bd) console.log("Business domain (saved):", bd);
+      }
       if (state.expiresAt) {
         const when = new Date(state.expiresAt).toISOString();
-        console.log("Expires:", state.expired ? chalk.red(`${when} (EXPIRED)`) : when);
+        if (state.expired) {
+          const note = state.refreshable
+            ? chalk.yellow(`${when} (EXPIRED — auto-refresh on next API call)`)
+            : chalk.red(`${when} (EXPIRED — run \`auth login\` to renew)`);
+          console.log("Expires:", note);
+        } else {
+          console.log("Expires:", when);
+        }
       }
     });
+
+  auth
+    .command("whoami")
+    .argument("[url]", "Platform URL (defaults to current)")
+    .description("Show current user identity decoded from saved id_token")
+    .action((urlArg: string | undefined) => {
+      const json = wantsJsonOutput(program);
+      const adminDir = getAdminDir();
+
+      const envUrlRaw =
+        process.env.KWEAVER_BASE_URL?.trim() ?? process.env.KWEAVER_API_URL?.trim();
+      const envTokenRaw =
+        process.env.KWEAVER_ADMIN_TOKEN?.trim() ?? process.env.KWEAVER_TOKEN?.trim();
+
+      let platform: string | null = null;
+      let fromEnvOnly = false;
+
+      if (urlArg?.trim()) {
+        platform = normalizeBaseUrl(urlArg.trim());
+      } else {
+        const st = readState(adminDir);
+        if (st?.currentPlatform) {
+          platform = st.currentPlatform;
+        } else if (envUrlRaw && envTokenRaw) {
+          platform = normalizeBaseUrl(envUrlRaw);
+          fromEnvOnly = true;
+        }
+      }
+
+      if (!platform) {
+        console.error(
+          chalk.red("No active platform. Run `kweaver-admin auth login <platform-url>` first."),
+        );
+        process.exit(1);
+      }
+
+      if (fromEnvOnly) {
+        const accessToken = envTokenRaw!.replace(/^Bearer\s+/i, "");
+        const payload = decodeJwtPayload(accessToken);
+        if (json) {
+          printJson({ platform, source: "env", ...(payload ?? {}) });
+          return;
+        }
+        console.log(`Platform: ${platform}`);
+        console.log(`Source:   env (KWEAVER_TOKEN / KWEAVER_ADMIN_TOKEN)`);
+        if (payload) {
+          const uname = payload.preferred_username ?? payload.name;
+          if (typeof uname === "string" && uname) console.log(`Username: ${uname}`);
+          console.log(`User ID:  ${payload.sub ?? "(unknown)"}`);
+          console.log(`Issuer:   ${payload.iss ?? "(unknown)"}`);
+          if (payload.iat) {
+            console.log(`Issued:   ${new Date((payload.iat as number) * 1000).toISOString()}`);
+          }
+          if (payload.exp) {
+            console.log(`Expires:  ${new Date((payload.exp as number) * 1000).toISOString()}`);
+          }
+        } else {
+          console.log(`User info unavailable: opaque access token.`);
+          console.log(`Hint: run \`kweaver-admin auth login ${platform}\` to obtain a full session.`);
+        }
+        return;
+      }
+
+      const token = readToken(adminDir, platform);
+      if (!token) {
+        console.error(chalk.red(`No saved token for ${platform}.`));
+        process.exit(1);
+      }
+      if (!token.idToken) {
+        console.error(chalk.red(`No id_token saved for ${platform}. Re-login to obtain one.`));
+        process.exit(1);
+      }
+      const payload = decodeJwtPayload(token.idToken);
+      if (!payload) {
+        console.error(chalk.red("Failed to decode id_token."));
+        process.exit(1);
+      }
+      if (json) {
+        printJson({ platform, ...payload });
+        return;
+      }
+      console.log(`Platform: ${platform}`);
+      const uname = payload.preferred_username ?? payload.name;
+      if (typeof uname === "string" && uname) console.log(`Username: ${uname}`);
+      console.log(`User ID:  ${payload.sub ?? "(unknown)"}`);
+      console.log(`Issuer:   ${payload.iss ?? "(unknown)"}`);
+      if (payload.sid) console.log(`Session:  ${payload.sid}`);
+      if (payload.iat) {
+        console.log(`Issued:   ${new Date((payload.iat as number) * 1000).toISOString()}`);
+      }
+      if (payload.exp) {
+        console.log(`Expires:  ${new Date((payload.exp as number) * 1000).toISOString()}`);
+      }
+    });
+
+  auth
+    .command("change-password")
+    .argument("[url]", "Platform URL (defaults to current)")
+    .requiredOption("-u, --account <name>", "Account / login name")
+    .option("-o, --old-password <password>", "Old password (omit only with --forget)")
+    .requiredOption("-n, --new-password <password>", "New password")
+    .option("--public-key-file <path>", "Override RSA public key (PEM) for password encryption")
+    .option("--forget", "Forgot-password flow (requires --vcode-uuid + --vcode + --email or --tel)")
+    .option("--vcode-uuid <uuid>", "Verification code UUID (forgot-password flow)")
+    .option("--vcode <code>", "Verification code value (forgot-password flow)")
+    .option("--email <addr>", "Email address (forgot-password flow)")
+    .option("--tel <number>", "Telephone number (forgot-password flow)")
+    .description(
+      "Change EACP account password via /api/eacp/v1/auth1/modifypassword (no token required)",
+    )
+    .action(
+      async (
+        url: string | undefined,
+        opts: {
+          account: string;
+          oldPassword?: string;
+          newPassword: string;
+          publicKeyFile?: string;
+          forget?: boolean;
+          vcodeUuid?: string;
+          vcode?: string;
+          email?: string;
+          tel?: string;
+        },
+      ) => {
+        const globals = program.optsWithGlobals<{ baseUrl?: string }>();
+        const baseUrl = normalizeBaseUrl(
+          url?.trim() || globals.baseUrl?.trim() || resolveBaseUrl(),
+        );
+        if (!opts.forget && !opts.oldPassword) {
+          console.error(chalk.red("--old-password is required (or use --forget for vcode flow)."));
+          process.exit(1);
+        }
+        if (opts.forget) {
+          if (!opts.vcodeUuid || !opts.vcode) {
+            console.error(chalk.red("--forget requires --vcode-uuid and --vcode."));
+            process.exit(1);
+          }
+          if (!opts.email && !opts.tel) {
+            console.error(chalk.red("--forget requires --email or --tel."));
+            process.exit(1);
+          }
+          if (opts.email && opts.tel) {
+            console.error(chalk.red("--forget: provide only one of --email / --tel."));
+            process.exit(1);
+          }
+        }
+        try {
+          const pem = opts.publicKeyFile
+            ? readFileSync(opts.publicKeyFile, "utf8").trim()
+            : undefined;
+          const result = await eacpModifyPassword(baseUrl, {
+            account: opts.account,
+            oldPassword: opts.oldPassword,
+            newPassword: opts.newPassword,
+            publicKeyPem: pem,
+            isForgetPwd: opts.forget === true,
+            vcode:
+              opts.vcodeUuid && opts.vcode
+                ? { uuid: opts.vcodeUuid, code: opts.vcode }
+                : undefined,
+            emailAddress: opts.email,
+            telNumber: opts.tel,
+          });
+          const json = wantsJsonOutput(program);
+          if (json) {
+            printJson({ status: result.status, ok: result.ok, body: result.json ?? result.body });
+          }
+          if (!result.ok) {
+            const msg =
+              (result.json as { message?: string; cause?: string } | undefined)?.message
+              ?? (result.json as { cause?: string } | undefined)?.cause
+              ?? result.body
+              ?? `HTTP ${result.status}`;
+            console.error(chalk.red(`Change password failed (HTTP ${result.status}): ${msg}`));
+            process.exit(1);
+          }
+          if (!json) {
+            console.log(chalk.green(`Password changed for ${opts.account} on ${baseUrl}`));
+          }
+        } catch (e) {
+          console.error(chalk.red(`Change password failed: ${e instanceof Error ? e.message : String(e)}`));
+          process.exit(1);
+        }
+      },
+    );
 
   auth
     .command("token")

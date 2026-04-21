@@ -37,7 +37,24 @@ export function formatColumns(
   return lines.join("\n");
 }
 
-export function printColumns(head: string[], rows: (string | number)[][]): void {
+export interface PrintColumnsOptions {
+  /**
+   * Message to print instead of a bare header when `rows` is empty.
+   * Defaults to "(no rows)". Pass an explicit string to give context-specific
+   * guidance (e.g. "No LLM models configured on this platform.").
+   */
+  emptyHint?: string;
+}
+
+export function printColumns(
+  head: string[],
+  rows: (string | number)[][],
+  options: PrintColumnsOptions = {},
+): void {
+  if (rows.length === 0) {
+    console.log(chalk.dim(options.emptyHint ?? "(no rows)"));
+    return;
+  }
   const output = formatColumns(head, rows);
   const [header, ...rest] = output.split("\n");
   const lines = [chalk.cyan(header), ...rest];

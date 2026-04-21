@@ -45,17 +45,32 @@ export interface TokenConfig {
   refreshToken?: string;
   idToken?: string;
   expiresAt?: number;
+  /**
+   * Skip TLS certificate verification for this platform (saved by `auth login -k`).
+   * Same field as kweaver-sdk `TokenConfig.tlsInsecure`.
+   */
+  tlsInsecure?: boolean;
+  /** @deprecated use `tlsInsecure` */
   insecure?: boolean;
 }
 
 export interface ClientConfig {
   clientId: string;
   clientSecret: string;
+  /** Redirect URI used at registration. Used by preflight to detect drift. */
+  redirectUri?: string;
+  /** OAuth2 scope granted at registration. */
+  scope?: string;
+  /** Base URL the client was registered against. */
+  baseUrl?: string;
 }
 
 export interface AdminState {
   currentPlatform?: string;
 }
+
+/** Virtual root department id (ISF / ISFWeb `ROOT_DEPARTMENT_ID`). */
+export const ROOT_DEPARTMENT_ID = "00000000-0000-0000-0000-000000000000";
 
 export interface OrgUnit {
   id: string;
