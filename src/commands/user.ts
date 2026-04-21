@@ -110,7 +110,8 @@ export function registerUserCommands(program: Command): void {
       "--csf-level <n>",
       "Confidentiality level (密级). Valid values are deployment-specific and " +
         "configured in UserManagement's csf_level_enum. " +
-        "(default: env KWEAVER_ADMIN_CSF_LEVEL or 5)",
+        "(default: omitted; ShareMgnt chooses/initializes a default. " +
+        "Set env KWEAVER_ADMIN_CSF_LEVEL to force a value globally.)",
     )
     .option(
       "--priority <n>",

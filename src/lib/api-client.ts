@@ -264,7 +264,12 @@ export class ApiClient {
       return await this.shareMgnt<unknown>("Usrm_GetOrgDepartmentById", [id]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!/部门不存在|errID:?\s*20201/i.test(msg)) throw e;
+      // Some deployments return errID=99 + "'NoneType' object is not subscriptable"
+      // for root-like ids (e.g. "-1") on Usrm_GetOrgDepartmentById. Fall back to
+      // Usrm_GetDepartmentById for these known ShareMgnt variants as well.
+      if (!/部门不存在|errID:?\s*20201|errID=?\s*99|NoneType.+subscriptable/i.test(msg)) {
+        throw e;
+      }
       return await this.shareMgnt<unknown>("Usrm_GetDepartmentById", [id]);
     }
   }
@@ -500,10 +505,8 @@ export class ApiClient {
    * @param input.csfLevel        Confidentiality level. Allowed values are
    *                              deployment-specific (configured in the
    *                              `csf_level_enum` of UserManagement). When
-   *                              omitted, falls back to env
-   *                              `KWEAVER_ADMIN_CSF_LEVEL` then `5`, which
-   *                              is the value accepted by the reference
-   *                              KWeaver/Anyshare deployment.
+   *                              omitted, we do not send the field and let
+   *                              ShareMgnt decide/init the default.
    * @param input.callerUserId    UUID of the admin invoking the call
    *                              (positional thrift parameter). Auto-resolved
    *                              from saved id_token when omitted.
@@ -544,8 +547,25 @@ export class ApiClient {
     }
     const csfLevel =
       input.csfLevel ??
-      (process.env.KWEAVER_ADMIN_CSF_LEVEL ? Number(process.env.KWEAVER_ADMIN_CSF_LEVEL) : 5);
-    const ncTUsrmUserInfo = {
+      (process.env.KWEAVER_ADMIN_CSF_LEVEL ? Number(process.env.KWEAVER_ADMIN_CSF_LEVEL) : undefined);
+    const ncTUsrmUserInfo: {
+      loginName: string;
+      displayName: string;
+      code: string;
+      position: string;
+      managerID: string | null;
+      managerDisplayName: string | null;
+      remark: string;
+      email: string;
+      telNumber: string;
+      idcardNumber: string;
+      departmentIds: string[];
+      priority: number;
+      csfLevel?: number;
+      csfLevel2: number | null;
+      pwdControl: boolean;
+      expireTime: number;
+    } = {
       loginName: input.loginName,
       displayName: input.displayName ?? input.loginName,
       code: input.code ?? "",
@@ -558,11 +578,13 @@ export class ApiClient {
       idcardNumber: input.idcardNumber ?? "",
       departmentIds: input.departmentIds ?? ["-1"],
       priority: input.priority ?? 999,
-      csfLevel,
       csfLevel2: input.csfLevel2 ?? null,
       pwdControl: input.pwdControl ?? false,
       expireTime: input.expireTime ?? -1,
     };
+    if (csfLevel !== undefined) {
+      ncTUsrmUserInfo.csfLevel = csfLevel;
+    }
     return this.shareMgnt<string>("Usrm_AddUser", [
       { ncTUsrmAddUserInfo: { user: { ncTUsrmUserInfo } } },
       callerUserId,

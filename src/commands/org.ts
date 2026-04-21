@@ -182,11 +182,23 @@ Notes:
         printJson(data);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        const hint =
-          /404|not found/i.test(msg)
-            ? "\n\nHint: GET /api/user-management/v1/departments/:id may be unregistered on this deployment; " +
-              "`org list` / `org tree` still work via search. Use an id from `org list`."
-            : "";
+        let hint = "";
+        if (/404|not found/i.test(msg)) {
+          hint =
+            "\n\nHint: GET /api/user-management/v1/departments/:id may be unregistered on this deployment; " +
+            "`org list` / `org tree` still work via search. Use an id from `org list`.";
+        }
+        if (
+          id === "-1" &&
+          /errID=?\s*99|NoneType.+subscriptable/i.test(msg)
+        ) {
+          hint =
+            "\n\nHint: this deployment's ShareMgnt cannot resolve sentinel id `-1` " +
+            "(backend bug: errID=99). Use a real root department id instead:\n" +
+            "  1) `kweaver-admin org list --limit 1 --json`\n" +
+            "  2) copy `.entries[0].id` as <root-id>\n" +
+            "  3) `kweaver-admin org get <root-id>`";
+        }
         exitUserError(msg + hint);
       }
     });
