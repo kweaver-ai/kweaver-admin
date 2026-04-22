@@ -56,6 +56,11 @@ node dist/index.js --help
 # optional: npm link  →  kweaver-admin on PATH
 ```
 
+> **Windows note:** Windows does not honor the Node shebang, so running
+> `.\dist\index.js` directly will not work. Use `node .\dist\index.js ...`,
+> or install/link the package (`npm install -g .` or `npm link`) and call
+> `kweaver-admin` — npm generates the proper `.cmd` / `.ps1` shims for you.
+
 ## Authentication
 
 1. **Interactive (recommended):** point at your platform base URL and sign in (browser or paste-code flow):

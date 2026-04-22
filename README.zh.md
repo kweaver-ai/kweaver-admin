@@ -54,6 +54,11 @@ node dist/index.js --help
 # 可选：npm link  →  在 PATH 上使用 kweaver-admin
 ```
 
+> **Windows 提示：** Windows 不识别 Node 的 shebang，直接执行
+> `.\dist\index.js` 不会被 node 接管。请使用 `node .\dist\index.js ...`，
+> 或者通过 `npm install -g .` / `npm link` 安装后用 `kweaver-admin`
+> 命令调用——npm 会自动生成对应的 `.cmd` / `.ps1` 包装脚本。
+
 ## 认证
 
 1. **交互式登录（推荐）：** 指定平台根地址，在浏览器完成登录或使用粘贴码流程：
