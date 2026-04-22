@@ -152,7 +152,9 @@ export function describePlatformEntries(input: {
         ? payload.preferred_username
         : typeof payload?.name === "string" && payload.name
           ? payload.name
-          : undefined;
+          : typeof token.username === "string" && token.username
+            ? token.username
+            : undefined;
     const userId =
       typeof payload?.sub === "string" && payload.sub ? payload.sub : undefined;
     const issuer =
@@ -513,7 +515,11 @@ export function registerAuthCommands(program: Command): void {
 
       for (const e of entries) {
         const marker = e.active ? chalk.green("*") : " ";
-        const who = e.username ?? chalk.gray("(opaque token)");
+        const who =
+          e.username ??
+          (e.userId
+            ? `${chalk.gray("uid:")}${e.userId}`
+            : chalk.gray("(unknown — token has no username/sub claim; pass -u to commands)"));
         const status =
           e.status === "valid"
             ? chalk.green("valid")
