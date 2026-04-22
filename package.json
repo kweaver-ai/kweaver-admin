@@ -13,8 +13,8 @@
     "docs/SECURITY.md"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js --banner:js='#!/usr/bin/env node' --sourcemap --packages=external",
-    "dev": "esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.js --banner:js='#!/usr/bin/env node' --sourcemap --packages=external --watch",
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
