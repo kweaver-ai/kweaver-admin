@@ -63,11 +63,21 @@ export function resolveCurrentAccount(adminDir: string): string | undefined {
   const state = readState(adminDir);
   if (!state?.currentPlatform) return undefined;
   const token = readToken(adminDir, state.currentPlatform);
-  if (!token?.idToken) return undefined;
-  const payload = decodeJwtPayload(token.idToken);
-  if (!payload) return undefined;
-  const candidate = payload.preferred_username ?? payload.name;
-  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+  if (!token) return undefined;
+
+  const fromJwt = (raw: string | undefined): string | undefined => {
+    if (!raw) return undefined;
+    const payload = decodeJwtPayload(raw);
+    if (!payload) return undefined;
+    const candidate = payload.preferred_username ?? payload.name;
+    return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+  };
+
+  return (
+    fromJwt(token.idToken) ??
+    fromJwt(token.accessToken) ??
+    (typeof token.username === "string" && token.username.trim() ? token.username.trim() : undefined)
+  );
 }
 
 export function resolveWhoamiPlatform(input: {
@@ -280,10 +290,11 @@ export function registerAuthCommands(program: Command): void {
             product: loginOpts.product,
             signinPublicKeyPem: signinPem,
           });
-          writeToken(adminDir, baseUrl, mergeLoginTls(token));
+          const stored = mergeLoginTls({ ...token, username: loginOpts.username });
+          writeToken(adminDir, baseUrl, stored);
           writeState(adminDir, { currentPlatform: baseUrl });
           console.log(chalk.green(`Logged in to ${baseUrl} as ${loginOpts.username}`));
-          await persistSessionAfterLogin(program, adminDir, baseUrl, mergeLoginTls(token));
+          await persistSessionAfterLogin(program, adminDir, baseUrl, stored);
           return;
         }
 
@@ -563,7 +574,17 @@ export function registerAuthCommands(program: Command): void {
           if (!account) {
             console.error(
               chalk.red(
-                "Cannot determine account: no active session. Pass -u/--account, or run `kweaver-admin auth login` first.",
+                "Cannot determine account from saved session.",
+              ),
+            );
+            console.error(
+              chalk.gray(
+                "The id_token does not carry preferred_username/name (only sub/UUID), so we cannot infer the EACP login name.",
+              ),
+            );
+            console.error(
+              chalk.gray(
+                "Pass it explicitly:  kweaver-admin auth change-password -u <login-name>",
               ),
             );
             process.exit(1);

@@ -52,6 +52,12 @@ export interface TokenConfig {
   tlsInsecure?: boolean;
   /** @deprecated use `tlsInsecure` */
   insecure?: boolean;
+  /**
+   * Login name persisted at login time. Used as a fallback by
+   * `resolveCurrentAccount` when the saved id_token does not carry
+   * `preferred_username` / `name` claims (some IdPs only emit `sub`).
+   */
+  username?: string;
 }
 
 export interface ClientConfig {

@@ -38,6 +38,25 @@ describe("resolveCurrentAccount", () => {
     expect(resolveCurrentAccount(tempDir)).toBeUndefined();
   });
 
+  it("falls back to access_token claim when id_token lacks username", () => {
+    writeState(tempDir, { currentPlatform: "https://p.com" });
+    writeToken(tempDir, "https://p.com", {
+      accessToken: makeIdToken({ preferred_username: "from-access" }),
+      idToken: makeIdToken({ sub: "uid-only" }),
+    });
+    expect(resolveCurrentAccount(tempDir)).toBe("from-access");
+  });
+
+  it("falls back to persisted username when no JWT carries the claim", () => {
+    writeState(tempDir, { currentPlatform: "https://p.com" });
+    writeToken(tempDir, "https://p.com", {
+      accessToken: makeIdToken({ sub: "uid-only" }),
+      idToken: makeIdToken({ sub: "uid-only" }),
+      username: "alice",
+    });
+    expect(resolveCurrentAccount(tempDir)).toBe("alice");
+  });
+
   it("reads preferred_username from id_token", () => {
     writeState(tempDir, { currentPlatform: "https://p.com" });
     writeToken(tempDir, "https://p.com", {
