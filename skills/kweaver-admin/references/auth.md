@@ -49,21 +49,46 @@ Validation / constraints:
 
 ### `auth whoami [url]`
 
-- Decodes identity from stored token/id token context.
-- If `KWEAVER_BASE_URL` + `KWEAVER_TOKEN`/`KWEAVER_ADMIN_TOKEN` are set and no
-  explicit `[url]` is passed, CLI prefers env credentials over saved
+- Shows current user identity for the saved (or env) session.
+- Username resolution chain (first hit wins):
+  1. `id_token` claim (`preferred_username` / `name`)
+  2. `access_token` claim (same fields)
+  3. Persisted login name on the saved token (`token.username`, written by
+     `-u/-p` login or by previous `whoami` lookups)
+  4. `GET /api/eacp/v1/user/get` with `Authorization: Bearer <access_token>`
+     (matches `kweaver-sdk` behavior; returns `account` / `name` / `mail`)
+  5. `GET /api/user-management/v1/users/<sub>/account?role=...` public
+     endpoint as a fallback for deployments where EACP `user/get` is
+     blocked by the per-product client filter (HTTP 401 from
+     `ncEACUserHandler`).
+- A successful backend lookup is **persisted back** to the token file so
+  later commands (`auth list`, `change-password`, …) read it locally
+  without another HTTP round-trip.
+- `--no-lookup`: skip the backend HTTP fallbacks (steps 4 and 5).
+- If `KWEAVER_BASE_URL` + `KWEAVER_TOKEN`/`KWEAVER_ADMIN_TOKEN` are set and
+  no explicit `[url]` is passed, CLI prefers env credentials over saved
   `currentPlatform`.
-- Env-only mode may expose less identity detail than saved `id_token` mode.
+- `--json` includes `username` and `usernameSource`
+  (`id_token` / `access_token` / `persisted` / `eacp/user/get` /
+  `user-management/users`) plus the raw decoded payload for debugging.
+- Successful login (`auth login`, both browser and `-u/-p` flows) also
+  performs the same lookup once and persists the result, so the very
+  first `whoami` after login is usually a no-op locally.
 
 ### `auth list` (alias `auth ls`)
 
 - Lists every platform that has a saved session under
   `~/.kweaver-admin/platforms/<base64url(url)>/token.json`.
 - For each platform shows: active marker (`*` for current), platform URL,
-  username (decoded from saved `id_token` `preferred_username` / `name`;
-  falls back to "(opaque token)" when no `id_token`), token status
-  (`valid` / `expired` / `expired (refreshable)` / `no-expiry`), expires
-  ISO timestamp, and `tls:insecure` flag when applicable.
+  user label, token status (`valid` / `expired` /
+  `expired (refreshable)` / `no-expiry`), expires ISO timestamp, and
+  `tls:insecure` flag when applicable.
+- User label resolution:
+  1. JWT `preferred_username` / `name` from `id_token`
+  2. Persisted `token.username` (set at login or by `auth whoami`)
+  3. `uid:<sub UUID>` when only the `sub` claim is present
+  4. `(unknown — token has no username/sub claim; pass -u to commands)`
+     when nothing decodes
 - Status semantics:
   - `valid`: `expiresAt` is in the future.
   - `expired`: `expiresAt` is in the past. Reports `(refreshable)` when a
@@ -84,8 +109,11 @@ forgot-password / vcode flow is **not** supported by this CLI; use the web
 console for password recovery.
 
 - `-u, --account <name>`: account/login name. Optional when there is an
-  active session — defaults to the `preferred_username` (fallback `name`)
-  claim of the saved `id_token`.
+  active session — defaults to the resolution chain used by `auth whoami`
+  (`id_token` claim → `access_token` claim → persisted `token.username`).
+  Backend lookup at change-password time is **not** attempted; if the
+  chain yields nothing the CLI errors and asks the operator to either
+  pass `-u` or run `auth whoami` first (which persists the resolved name).
 - `-o, --old-password <password>`: old password. Prompted on TTY (hidden) if
   omitted.
 - `-n, --new-password <password>`: new password. Prompted on TTY (hidden,
@@ -95,15 +123,22 @@ console for password recovery.
 Validation / constraints:
 
 - `--old-password` is always required (passed as flag or prompted on TTY).
-- When `--account` is omitted, the current session must have a saved
-  `id_token` exposing `preferred_username` or `name`; otherwise the CLI
-  errors and asks the operator to either pass `-u` or run `auth login`.
+- When `--account` is omitted, the resolution chain above must yield a
+  login name; otherwise the CLI errors with a hint to pass `-u`.
 - In `--json` or non-TTY mode, `--old-password` and `--new-password` must
   be provided as flags (no prompting).
 - This command talks to EACP `/api/eacp/v1/auth1/modifypassword`; it does
   not require admin token auth.
-- After a successful change, CLI prints a stderr reminder to re-run
-  `auth login` with the new password.
+- The fetch honors the saved platform's `tlsInsecure` flag (or the global
+  `-k/--insecure` / `KWEAVER_TLS_INSECURE`), so self-signed-cert
+  deployments work without extra plumbing.
+- Network errors are surfaced via `formatFetchFailure`, which unwraps
+  `error.cause` (e.g. `self signed certificate`, `ECONNREFUSED`).
+- After a successful change, CLI prints a stderr reminder
+  `Next time you log in, use the new password.` It does **not** invalidate
+  the locally saved access_token; only the next `auth login` (with the
+  new password) replaces it. Refresh tokens may be revoked server-side
+  depending on backend policy.
 
 ### `auth token`
 

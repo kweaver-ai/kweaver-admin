@@ -405,10 +405,15 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("whoami")
     .argument("[url]", "Platform URL (defaults to current)")
-    .option("--no-lookup", "Do not call /api/eacp/v1/user/get to resolve display name")
+    .option(
+      "--no-lookup",
+      "Skip backend HTTP fallback (eacp/user/get + user-management/users/<sub>/account)",
+    )
     .description(
-      "Show current user identity. Resolves Username via id_token claims, " +
-        "access_token claims, persisted login name, and (optionally) a backend lookup via /api/eacp/v1/user/get.",
+      "Show current user identity. Username resolution: id_token -> access_token -> " +
+        "persisted token.username -> GET /api/eacp/v1/user/get -> " +
+        "GET /api/user-management/v1/users/<sub>/account?role=. " +
+        "Successful backend lookups are persisted back to token.json.",
     )
     .action(async (urlArg: string | undefined, opts: { lookup?: boolean }) => {
       const json = wantsJsonOutput(program);
@@ -580,7 +585,10 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("list")
     .alias("ls")
-    .description("List every platform with a saved session under ~/.kweaver-admin/platforms")
+    .description(
+      "List every platform with a saved session under ~/.kweaver-admin/platforms. " +
+        "User label resolves: id_token claim -> persisted token.username -> uid:<sub UUID> -> (unknown).",
+    )
     .action(() => {
       const json = wantsJsonOutput(program);
       const adminDir = getAdminDir();
@@ -640,13 +648,15 @@ export function registerAuthCommands(program: Command): void {
     .argument("[url]", "Platform URL (defaults to current)")
     .option(
       "-u, --account <name>",
-      "Account / login name (defaults to current session for self-change)",
+      "Login name. Defaults to id_token / access_token / persisted token.username; pass -u if all are unavailable.",
     )
     .option("-o, --old-password <password>", "Old password (prompted on TTY if omitted)")
     .option("-n, --new-password <password>", "New password (prompted on TTY if omitted)")
     .option("--public-key-file <path>", "Override RSA public key (PEM) for password encryption")
     .description(
-      "Change EACP account password via /api/eacp/v1/auth1/modifypassword (no token required; --account defaults to current session). " +
+      "Change EACP account password via /api/eacp/v1/auth1/modifypassword. " +
+        "No admin token required; honors the platform's tlsInsecure flag. " +
+        "Locally saved access_token keeps working after the change; only refresh_token may be revoked depending on backend policy. " +
         "Forgot-password / vcode flow is not supported by this CLI — use the web console for password recovery.",
     )
     .action(
