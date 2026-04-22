@@ -468,11 +468,7 @@ export function registerAuthCommands(program: Command): void {
         console.log(`Platform: ${platform}`);
         console.log(`Source:   env (KWEAVER_TOKEN / KWEAVER_ADMIN_TOKEN)`);
         if (payload) {
-          if (username) {
-            const tag =
-              usernameSource === "id_token" ? "" : chalk.gray(`  (${usernameSource})`);
-            console.log(`Username: ${username}${tag}`);
-          }
+          if (username) console.log(`Username: ${username}`);
           console.log(`User ID:  ${payload.sub ?? "(unknown)"}`);
           console.log(`Issuer:   ${payload.iss ?? "(unknown)"}`);
           if (payload.iat) {
@@ -563,8 +559,7 @@ export function registerAuthCommands(program: Command): void {
       }
       console.log(`Platform: ${platform}`);
       if (username) {
-        const tag = usernameSource === "id_token" ? "" : chalk.gray(`  (${usernameSource})`);
-        console.log(`Username: ${username}${tag}`);
+        console.log(`Username: ${username}`);
       } else {
         console.log(
           `Username: ${chalk.gray("(unresolved — pass -u to commands or re-login with -u/-p)")}`,
