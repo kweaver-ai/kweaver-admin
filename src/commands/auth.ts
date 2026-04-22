@@ -8,6 +8,7 @@ import { eacpModifyPassword } from "../lib/eacp";
 import { decodeJwtPayload } from "../lib/jwt";
 import {
   deleteToken,
+  listPlatforms,
   loadPlatformBusinessDomain,
   readClient,
   readState,
@@ -94,6 +95,79 @@ export function resolveWhoamiPlatform(input: {
     };
   }
   return { platform: null, fromEnvOnly: false };
+}
+
+export type PlatformEntry = {
+  platform: string;
+  active: boolean;
+  username?: string;
+  userId?: string;
+  issuer?: string;
+  expiresAt?: number;
+  status: "valid" | "expired" | "no-expiry";
+  refreshable: boolean;
+  tlsInsecure: boolean;
+};
+
+/**
+ * Build per-platform session entries from saved token files.
+ *
+ * Pure helper consumed by `auth list` (and its tests). It does not touch the
+ * filesystem itself — all token / state inputs are passed in. A platform whose
+ * token cannot be read is omitted, mirroring how `listPlatforms` already
+ * filters folders without a `token.json`.
+ *
+ * Status semantics (aligned with `describeAuthState`):
+ *   - `valid`     : `expiresAt` is set and in the future
+ *   - `expired`   : `expiresAt` is set and in the past
+ *   - `no-expiry` : `expiresAt` is missing (e.g. opaque static token)
+ * `refreshable` is only meaningful when `status === "expired"` — it is true
+ * when a `refreshToken` is stored, signalling that the next API call can
+ * silently refresh.
+ */
+export function describePlatformEntries(input: {
+  platforms: string[];
+  currentPlatform?: string;
+  readToken: (url: string) => TokenConfig | undefined;
+  now?: number;
+}): PlatformEntry[] {
+  const now = input.now ?? Date.now();
+  const out: PlatformEntry[] = [];
+  for (const platform of input.platforms) {
+    const token = input.readToken(platform);
+    if (!token) continue;
+    const payload = token.idToken ? decodeJwtPayload(token.idToken) : undefined;
+    const username =
+      typeof payload?.preferred_username === "string" && payload.preferred_username
+        ? payload.preferred_username
+        : typeof payload?.name === "string" && payload.name
+          ? payload.name
+          : undefined;
+    const userId =
+      typeof payload?.sub === "string" && payload.sub ? payload.sub : undefined;
+    const issuer =
+      typeof payload?.iss === "string" && payload.iss ? payload.iss : undefined;
+    let status: PlatformEntry["status"];
+    if (token.expiresAt === undefined) {
+      status = "no-expiry";
+    } else if (token.expiresAt <= now) {
+      status = "expired";
+    } else {
+      status = "valid";
+    }
+    out.push({
+      platform,
+      active: input.currentPlatform === platform,
+      username,
+      userId,
+      issuer,
+      expiresAt: token.expiresAt,
+      status,
+      refreshable: status === "expired" && Boolean(token.refreshToken),
+      tlsInsecure: token.tlsInsecure === true,
+    });
+  }
+  return out;
 }
 
 /** Commander may expose `--no-browser` as `noBrowser: true` or `browser: false`. */
@@ -397,6 +471,60 @@ export function registerAuthCommands(program: Command): void {
       }
       if (payload.exp) {
         console.log(`Expires:  ${new Date((payload.exp as number) * 1000).toISOString()}`);
+      }
+    });
+
+  auth
+    .command("list")
+    .alias("ls")
+    .description("List every platform with a saved session under ~/.kweaver-admin/platforms")
+    .action(() => {
+      const json = wantsJsonOutput(program);
+      const adminDir = getAdminDir();
+      const state = readState(adminDir);
+      const entries = describePlatformEntries({
+        platforms: listPlatforms(adminDir),
+        currentPlatform: state?.currentPlatform,
+        readToken: (url) => readToken(adminDir, url),
+      });
+
+      if (json) {
+        printJson({ currentPlatform: state?.currentPlatform ?? null, platforms: entries });
+        return;
+      }
+
+      if (entries.length === 0) {
+        console.log(
+          chalk.yellow("No saved platform sessions. Run `kweaver-admin auth login <platform-url>`."),
+        );
+        return;
+      }
+
+      for (const e of entries) {
+        const marker = e.active ? chalk.green("*") : " ";
+        const who = e.username ?? chalk.gray("(opaque token)");
+        const status =
+          e.status === "valid"
+            ? chalk.green("valid")
+            : e.status === "expired"
+              ? e.refreshable
+                ? chalk.yellow("expired (refreshable)")
+                : chalk.red("expired")
+              : chalk.gray("no-expiry");
+        const expires =
+          e.expiresAt !== undefined ? new Date(e.expiresAt).toISOString() : "—";
+        const tls = e.tlsInsecure ? chalk.yellow(" tls:insecure") : "";
+        console.log(`${marker} ${e.platform}`);
+        console.log(`    user: ${who}    status: ${status}    expires: ${expires}${tls}`);
+      }
+      if (entries.some((e) => e.active)) {
+        console.log();
+        console.log(chalk.gray("(* = active platform; switch with `auth login <url>`)"));
+      } else if (state?.currentPlatform) {
+        console.log();
+        console.log(
+          chalk.gray(`(current state.json points at ${state.currentPlatform} but no token is saved)`),
+        );
       }
     });
 

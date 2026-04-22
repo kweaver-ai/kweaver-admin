@@ -55,6 +55,27 @@ Validation / constraints:
   `currentPlatform`.
 - Env-only mode may expose less identity detail than saved `id_token` mode.
 
+### `auth list` (alias `auth ls`)
+
+- Lists every platform that has a saved session under
+  `~/.kweaver-admin/platforms/<base64url(url)>/token.json`.
+- For each platform shows: active marker (`*` for current), platform URL,
+  username (decoded from saved `id_token` `preferred_username` / `name`;
+  falls back to "(opaque token)" when no `id_token`), token status
+  (`valid` / `expired` / `expired (refreshable)` / `no-expiry`), expires
+  ISO timestamp, and `tls:insecure` flag when applicable.
+- Status semantics:
+  - `valid`: `expiresAt` is in the future.
+  - `expired`: `expiresAt` is in the past. Reports `(refreshable)` when a
+    `refresh_token` is stored — the next API call will silently refresh.
+  - `no-expiry`: token has no `expiresAt` (e.g. opaque static token from
+    `auth login --token`).
+- `--json`: `{ currentPlatform: string|null, platforms: PlatformEntry[] }`
+  where each entry is
+  `{ platform, active, username?, userId?, issuer?, expiresAt?, status, refreshable, tlsInsecure }`.
+- Read-only; does not contact any backend. Stale folders without a readable
+  `token.json` are skipped silently.
+
 ### `auth change-password [url]`
 
 Self-service change of any EACP account's password (including the currently

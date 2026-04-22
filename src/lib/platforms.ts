@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AdminState, ClientConfig, TokenConfig } from "./types";
 
@@ -85,4 +85,38 @@ export function savePlatformBusinessDomain(adminDir: string, url: string, busine
 
 export function loadPlatformBusinessDomain(adminDir: string, url: string): string | undefined {
   return readPlatformConfig(adminDir, url)?.businessDomain?.trim();
+}
+
+/**
+ * Enumerate every platform that has a saved `token.json` under
+ * `<adminDir>/platforms/<base64url(url)>/token.json`.
+ *
+ * Directory names that fail base64url decode, or that don't actually contain a
+ * readable `token.json`, are skipped silently — `auth list` should never crash
+ * because of one stale folder.
+ *
+ * Results are sorted alphabetically by platform URL for deterministic output.
+ */
+export function listPlatforms(adminDir: string): string[] {
+  const root = join(adminDir, "platforms");
+  if (!existsSync(root)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const urls: string[] = [];
+  for (const name of entries) {
+    let decoded: string;
+    try {
+      decoded = Buffer.from(name, "base64url").toString("utf8");
+    } catch {
+      continue;
+    }
+    if (!decoded || !/^https?:\/\//i.test(decoded)) continue;
+    if (!existsSync(join(root, name, "token.json"))) continue;
+    urls.push(decoded);
+  }
+  return urls.sort((a, b) => a.localeCompare(b));
 }

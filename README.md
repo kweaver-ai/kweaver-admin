@@ -111,6 +111,7 @@ Run `kweaver-admin <group> --help` for full flags and examples.
 - `auth logout` — Remove stored token for the current platform.
 - `auth status` — Show base URL, token source, TLS mode, and session status.
 - `auth whoami [url]` — Decode current identity from saved `id_token`.
+- `auth list` (alias `auth ls`) — List every platform with a saved session under `~/.kweaver-admin/platforms`, marking the active one with `*` and showing token status (valid / expired / refreshable / no-expiry).
 - `auth change-password [url]` — Change password through EACP endpoint. With an active session, `-u/--account` defaults to the logged-in admin (self-change); old/new passwords are prompted on TTY if omitted. The forgot-password / vcode flow is intentionally not supported — use the web console for password recovery.
 - `auth token` — Print current token to stdout (sensitive output).
 
