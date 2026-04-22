@@ -6,6 +6,8 @@ import { describeAuthState, getAdminDir, resolveBaseUrl, resolveToken } from "..
 import { persistSessionAfterLogin } from "../lib/persist-login";
 import { eacpModifyPassword } from "../lib/eacp";
 import { decodeJwtPayload } from "../lib/jwt";
+import { ApiClient } from "../lib/api-client";
+import { loadConfig } from "../lib/config";
 import {
   deleteToken,
   listPlatforms,
@@ -401,11 +403,47 @@ export function registerAuthCommands(program: Command): void {
       }
     });
 
+  /**
+   * Best-effort backend lookup: given a sub UUID, try to obtain the login
+   * name. Uses ShareMgnt `Usrm_GetUserInfo` (the same call `user get` uses)
+   * and walks a small set of known field names. Any error -> undefined.
+   */
+  async function lookupUsernameById(platform: string, userId: string): Promise<string | undefined> {
+    try {
+      const config = loadConfig();
+      const api = new ApiClient({ baseUrl: platform, config });
+      const raw = (await api.getUser(userId)) as unknown;
+      const candidates: Array<unknown> = [];
+      const visit = (v: unknown): void => {
+        if (!v || typeof v !== "object") return;
+        const obj = v as Record<string, unknown>;
+        for (const key of ["loginName", "login_name", "account", "name", "displayName"]) {
+          if (typeof obj[key] === "string" && (obj[key] as string).trim()) {
+            candidates.push(obj[key]);
+          }
+        }
+        for (const k of Object.keys(obj)) {
+          const child = obj[k];
+          if (child && typeof child === "object") visit(child);
+        }
+      };
+      visit(raw);
+      const first = candidates.find((c) => typeof c === "string" && (c as string).trim());
+      return typeof first === "string" ? first.trim() : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   auth
     .command("whoami")
     .argument("[url]", "Platform URL (defaults to current)")
-    .description("Show current user identity decoded from saved id_token")
-    .action((urlArg: string | undefined) => {
+    .option("--no-lookup", "Do not call backend to resolve username from sub UUID")
+    .description(
+      "Show current user identity. Resolves Username via id_token claims, " +
+        "access_token claims, persisted login name, and (optionally) a backend lookup by sub UUID.",
+    )
+    .action(async (urlArg: string | undefined, opts: { lookup?: boolean }) => {
       const json = wantsJsonOutput(program);
       const adminDir = getAdminDir();
 
@@ -428,18 +466,38 @@ export function registerAuthCommands(program: Command): void {
         process.exit(1);
       }
 
+      const tryLookup = opts.lookup !== false;
+
       if (fromEnvOnly) {
         const accessToken = envTokenRaw!.replace(/^Bearer\s+/i, "");
         const payload = decodeJwtPayload(accessToken);
+        const sub = typeof payload?.sub === "string" ? payload.sub : undefined;
+        let username: string | undefined;
+        let usernameSource = "id_token";
+        const fromJwt = payload?.preferred_username ?? payload?.name;
+        if (typeof fromJwt === "string" && fromJwt.trim()) {
+          username = fromJwt.trim();
+        } else if (tryLookup && sub) {
+          const looked = await lookupUsernameById(platform, sub).catch(() => undefined);
+          if (looked) {
+            username = looked;
+            usernameSource = "backend lookup";
+          }
+        }
         if (json) {
-          printJson({ platform, source: "env", ...(payload ?? {}) });
+          printJson({
+            platform,
+            source: "env",
+            username,
+            usernameSource: username ? usernameSource : undefined,
+            ...(payload ?? {}),
+          });
           return;
         }
         console.log(`Platform: ${platform}`);
         console.log(`Source:   env (KWEAVER_TOKEN / KWEAVER_ADMIN_TOKEN)`);
         if (payload) {
-          const uname = payload.preferred_username ?? payload.name;
-          if (typeof uname === "string" && uname) console.log(`Username: ${uname}`);
+          if (username) console.log(`Username: ${username}${usernameSource === "backend lookup" ? chalk.gray("  (resolved via backend)") : ""}`);
           console.log(`User ID:  ${payload.sub ?? "(unknown)"}`);
           console.log(`Issuer:   ${payload.iss ?? "(unknown)"}`);
           if (payload.iat) {
@@ -469,13 +527,53 @@ export function registerAuthCommands(program: Command): void {
         console.error(chalk.red("Failed to decode id_token."));
         process.exit(1);
       }
+
+      let username: string | undefined;
+      let usernameSource: "id_token" | "access_token" | "persisted" | "backend lookup" =
+        "id_token";
+      const idClaim = payload.preferred_username ?? payload.name;
+      if (typeof idClaim === "string" && idClaim.trim()) {
+        username = idClaim.trim();
+        usernameSource = "id_token";
+      } else if (token.accessToken) {
+        const ap = decodeJwtPayload(token.accessToken);
+        const ac = ap?.preferred_username ?? ap?.name;
+        if (typeof ac === "string" && ac.trim()) {
+          username = ac.trim();
+          usernameSource = "access_token";
+        }
+      }
+      if (!username && typeof token.username === "string" && token.username.trim()) {
+        username = token.username.trim();
+        usernameSource = "persisted";
+      }
+      const sub = typeof payload.sub === "string" ? payload.sub : undefined;
+      if (!username && tryLookup && sub) {
+        const looked = await lookupUsernameById(platform, sub).catch(() => undefined);
+        if (looked) {
+          username = looked;
+          usernameSource = "backend lookup";
+        }
+      }
+
       if (json) {
-        printJson({ platform, ...payload });
+        printJson({
+          platform,
+          username,
+          usernameSource: username ? usernameSource : undefined,
+          ...payload,
+        });
         return;
       }
       console.log(`Platform: ${platform}`);
-      const uname = payload.preferred_username ?? payload.name;
-      if (typeof uname === "string" && uname) console.log(`Username: ${uname}`);
+      if (username) {
+        const tag = usernameSource === "id_token" ? "" : chalk.gray(`  (${usernameSource})`);
+        console.log(`Username: ${username}${tag}`);
+      } else {
+        console.log(
+          `Username: ${chalk.gray("(unresolved — pass -u to commands or re-login with -u/-p)")}`,
+        );
+      }
       console.log(`User ID:  ${payload.sub ?? "(unknown)"}`);
       console.log(`Issuer:   ${payload.iss ?? "(unknown)"}`);
       if (payload.sid) console.log(`Session:  ${payload.sid}`);
