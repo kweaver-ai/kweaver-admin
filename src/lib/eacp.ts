@@ -144,6 +144,8 @@ export interface EacpModifyPasswordOptions {
   isForgetPwd?: boolean;
   emailAddress?: string;
   telNumber?: string;
+  /** Skip TLS certificate verification (matches saved platform setting). */
+  tlsInsecure?: boolean;
 }
 
 export interface EacpModifyPasswordResult {
@@ -188,14 +190,16 @@ export async function eacpModifyPassword(
   }
 
   const url = `${normalizeBaseUrl(baseUrl)}/api/eacp/v1/auth1/modifypassword`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/plain, */*",
-    },
-    body: JSON.stringify(body),
-  });
+  const resp = await runWithTlsInsecure(options.tlsInsecure === true, () =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/plain, */*",
+      },
+      body: JSON.stringify(body),
+    }),
+  );
   const text = await resp.text();
   let json: unknown;
   try {

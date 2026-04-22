@@ -5,6 +5,7 @@ import chalk from "chalk";
 import { describeAuthState, getAdminDir, resolveBaseUrl, resolveToken } from "../lib/auth";
 import { persistSessionAfterLogin } from "../lib/persist-login";
 import { eacpModifyPassword, fetchAccountByUserId, fetchEacpDisplayName } from "../lib/eacp";
+import { formatFetchFailure } from "../lib/network-error";
 import { decodeJwtPayload } from "../lib/jwt";
 import {
   deleteToken,
@@ -730,11 +731,17 @@ export function registerAuthCommands(program: Command): void {
           const pem = opts.publicKeyFile
             ? readFileSync(opts.publicKeyFile, "utf8").trim()
             : undefined;
+          const savedToken = readToken(getAdminDir(), baseUrl);
+          const tlsInsecureFlag =
+            savedToken?.tlsInsecure === true ||
+            program.optsWithGlobals<{ insecure?: boolean }>().insecure === true ||
+            /^(1|true)$/i.test(process.env.KWEAVER_TLS_INSECURE ?? "");
           const result = await eacpModifyPassword(baseUrl, {
             account,
             oldPassword,
             newPassword,
             publicKeyPem: pem,
+            tlsInsecure: tlsInsecureFlag,
           });
           if (json) {
             printJson({ status: result.status, ok: result.ok, body: result.json ?? result.body });
@@ -755,7 +762,8 @@ export function registerAuthCommands(program: Command): void {
             );
           }
         } catch (e) {
-          console.error(chalk.red(`Change password failed: ${e instanceof Error ? e.message : String(e)}`));
+          const url = `${baseUrl}/api/eacp/v1/auth1/modifypassword`;
+          console.error(chalk.red(`Change password failed: ${formatFetchFailure(url, e)}`));
           process.exit(1);
         }
       },
