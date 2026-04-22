@@ -758,7 +758,7 @@ export function registerAuthCommands(program: Command): void {
           if (!json) {
             console.log(chalk.green(`Password changed for ${account} on ${baseUrl}`));
             console.error(
-              chalk.yellow("Next time you log in, use the new password (re-run `auth login`)."),
+              chalk.yellow("Next time you log in, use the new password."),
             );
           }
         } catch (e) {
