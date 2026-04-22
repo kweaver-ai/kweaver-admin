@@ -146,9 +146,30 @@ OG="cli-test-org-$(date +%s)"
 |---|---|---|
 | 6.1 | `KA auth login --base-url https://<your-platform> -k` | Browser callback or device-code flow completes |
 | 6.2 | `KA auth status` | `Token: configured / Expires` recent |
-| 6.3 | `KA auth change-password` | Three prompts (old / new / confirm); use a throwaway account |
+| 6.3 | `KA auth change-password` (logged in) | `-u` defaults to current session; three hidden prompts (old / new / confirm); use a throwaway account |
+| 6.3a | `KA auth change-password -u other-account -o ... -n ...` | Targets a different account; non-interactive form |
+| 6.3b | `KA auth change-password --json` (no `-o/-n`) | Errors out: `--old-password` / `--new-password` required in non-interactive / --json mode |
+| 6.3c | `KA auth logout && KA auth change-password` | Errors out: cannot determine account (no session); hint suggests `-u` or `auth login` |
 | 6.4 | `KA auth logout` | Local token cleared; `auth status` shows `Token: not configured` |
 | 6.5 | `KA auth login` again | State restored |
+
+## 6B. `auth whoami` precedence (env vs saved session)
+
+Assumes a normal `auth login` first so `~/.kweaver-admin/state.json` has a
+`currentPlatform` that may differ from any env URL you set below. Unset env
+vars between rows if a case says “cleared”.
+
+| # | Command | Expectation |
+|---|---|---|
+| 6B.1 | `KA auth whoami` (no extra env) | Identity from saved `id_token`; `Platform:` matches the platform you logged into |
+| 6B.2 | `KWEAVER_BASE_URL=https://<env-host>/ KWEAVER_ADMIN_TOKEN=<tok> KA auth whoami` (saved `currentPlatform` is a *different* host) | `Source: env`; `Platform:` is **env** URL (env pair overrides saved session) |
+| 6B.3 | Same env vars as 6B.2 + `KA auth whoami https://<explicit-host>/` | `Platform:` is **explicit** URL (beats env + saved) |
+| 6B.4 | `KWEAVER_BASE_URL=https://<x>/` only (no token), token env vars cleared, saved session present | Not env-only; falls back to saved platform — `Source:` line absent (file `id_token` path) |
+| 6B.5 | `KWEAVER_ADMIN_TOKEN=<tok>` only (no base URL env), base URL env vars cleared, saved session present | Not env-only; falls back to saved platform |
+| 6B.6 | Full env pair + opaque / non-JWT access token | `User info unavailable: opaque access token.` + hint to run `auth login` |
+| 6B.7 | Full env pair + `KA --json auth whoami` | JSON includes `"source":"env"` |
+| 6B.8 | `KA auth logout` then `KWEAVER_BASE_URL=... KWEAVER_ADMIN_TOKEN=... KA auth whoami` | Still succeeds (env-only); `Source: env` |
+| 6B.9 | `KA auth logout`, env token vars cleared, no `KWEAVER_BASE_URL` pair | `auth whoami` exits non-zero (`No active platform` or no token, depending on state) |
 
 ## 7. Global flags
 
@@ -184,7 +205,7 @@ OG="cli-test-org-$(date +%s)"
 | # | Command | Expectation |
 |---|---|---|
 | 10A.1 | `npm ci && npm run lint` | 0 errors |
-| 10A.2 | `npm test` | 12 files / 37 tests pass |
+| 10A.2 | `npm test` | 14 files / 64 tests pass |
 | 10A.3 | `npm run build` | `dist/index.js` ~135 KB, shebang `#!/usr/bin/env node` |
 | 10A.4 | `npm pack --dry-run` | Tarball contains only `dist/` + `README*` + `docs/SECURITY.md` + `package.json` |
 | 10A.5 | `node ./dist/index.js --version` | `0.6.0` |
@@ -206,7 +227,8 @@ OG="cli-test-org-$(date +%s)"
 Before tagging `v0.6.0`:
 
 - [ ] Sections 0, 1, 2, 3, 4, 5, 7, 8, 10 all green on the live deployment
-- [ ] Section 6 verified at least once (manual auth lifecycle)
+- [ ] Section 6 verified at least once (manual auth lifecycle); section 6B
+      recommended when changing `auth whoami` / env precedence
 - [ ] Section 9 either green or explicitly skipped with reason
 - [ ] `.github/workflows/ci.yml` and `.github/workflows/publish-npm.yml`
       committed (requires a token with `workflow` scope, or add via the

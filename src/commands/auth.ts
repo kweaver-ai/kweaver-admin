@@ -1,4 +1,3 @@
-import { exec } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
@@ -32,7 +31,9 @@ import {
 } from "../lib/oauth";
 import type { TokenConfig } from "../lib/types";
 import { wantsJsonOutput } from "../lib/cli-json";
+import { openBrowser } from "../lib/browser";
 import { printJson } from "../utils/output";
+import { promptInput } from "../utils/prompt";
 
 interface LoginOpts {
   token?: string;
@@ -47,6 +48,52 @@ interface LoginOpts {
   noBrowser?: boolean;
   /** Commander may set `browser: false` for `--no-browser` (negated flag). */
   browser?: boolean;
+}
+
+/**
+ * Resolve the current session's account/login name from the saved id_token's
+ * `preferred_username` (fallback `name`). Used by `auth change-password` to let
+ * `-u/--account` default to the logged-in admin.
+ *
+ * Returns undefined when no platform is selected, no id_token is stored, the
+ * JWT cannot be decoded, or neither claim is a non-empty string.
+ */
+export function resolveCurrentAccount(adminDir: string): string | undefined {
+  const state = readState(adminDir);
+  if (!state?.currentPlatform) return undefined;
+  const token = readToken(adminDir, state.currentPlatform);
+  if (!token?.idToken) return undefined;
+  const payload = decodeJwtPayload(token.idToken);
+  if (!payload) return undefined;
+  const candidate = payload.preferred_username ?? payload.name;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : undefined;
+}
+
+export function resolveWhoamiPlatform(input: {
+  urlArg?: string;
+  currentPlatform?: string;
+  envBaseUrl?: string;
+  envToken?: string;
+}): { platform: string | null; fromEnvOnly: boolean } {
+  if (input.urlArg?.trim()) {
+    return {
+      platform: normalizeBaseUrl(input.urlArg.trim()),
+      fromEnvOnly: false,
+    };
+  }
+  if (input.envBaseUrl && input.envToken) {
+    return {
+      platform: normalizeBaseUrl(input.envBaseUrl),
+      fromEnvOnly: true,
+    };
+  }
+  if (input.currentPlatform) {
+    return {
+      platform: input.currentPlatform,
+      fromEnvOnly: false,
+    };
+  }
+  return { platform: null, fromEnvOnly: false };
 }
 
 /** Commander may expose `--no-browser` as `noBrowser: true` or `browser: false`. */
@@ -188,15 +235,12 @@ export function registerAuthCommands(program: Command): void {
         }
 
         const callbackPromise = startCallbackServer(port);
-        const openCmd =
-          process.platform === "darwin"
-            ? "open"
-            : process.platform === "win32"
-              ? "start"
-              : "xdg-open";
         console.log(chalk.dim(`Opening browser for login to ${baseUrl}...`));
         console.log(chalk.dim(`If browser does not open, visit:\n${authorizeUrl}`));
-        exec(`${openCmd} "${authorizeUrl}"`);
+        const opened = await openBrowser(authorizeUrl);
+        if (!opened) {
+          console.log(chalk.yellow("Could not open browser automatically; copy the URL above."));
+        }
 
         const callback = await callbackPromise;
         if (callback.state && callback.state !== state) {
@@ -282,21 +326,13 @@ export function registerAuthCommands(program: Command): void {
         process.env.KWEAVER_BASE_URL?.trim() ?? process.env.KWEAVER_API_URL?.trim();
       const envTokenRaw =
         process.env.KWEAVER_ADMIN_TOKEN?.trim() ?? process.env.KWEAVER_TOKEN?.trim();
-
-      let platform: string | null = null;
-      let fromEnvOnly = false;
-
-      if (urlArg?.trim()) {
-        platform = normalizeBaseUrl(urlArg.trim());
-      } else {
-        const st = readState(adminDir);
-        if (st?.currentPlatform) {
-          platform = st.currentPlatform;
-        } else if (envUrlRaw && envTokenRaw) {
-          platform = normalizeBaseUrl(envUrlRaw);
-          fromEnvOnly = true;
-        }
-      }
+      const st = readState(adminDir);
+      const { platform, fromEnvOnly } = resolveWhoamiPlatform({
+        urlArg,
+        currentPlatform: st?.currentPlatform,
+        envBaseUrl: envUrlRaw,
+        envToken: envTokenRaw,
+      });
 
       if (!platform) {
         console.error(
@@ -367,73 +403,95 @@ export function registerAuthCommands(program: Command): void {
   auth
     .command("change-password")
     .argument("[url]", "Platform URL (defaults to current)")
-    .requiredOption("-u, --account <name>", "Account / login name")
-    .option("-o, --old-password <password>", "Old password (omit only with --forget)")
-    .requiredOption("-n, --new-password <password>", "New password")
+    .option(
+      "-u, --account <name>",
+      "Account / login name (defaults to current session for self-change)",
+    )
+    .option("-o, --old-password <password>", "Old password (prompted on TTY if omitted)")
+    .option("-n, --new-password <password>", "New password (prompted on TTY if omitted)")
     .option("--public-key-file <path>", "Override RSA public key (PEM) for password encryption")
-    .option("--forget", "Forgot-password flow (requires --vcode-uuid + --vcode + --email or --tel)")
-    .option("--vcode-uuid <uuid>", "Verification code UUID (forgot-password flow)")
-    .option("--vcode <code>", "Verification code value (forgot-password flow)")
-    .option("--email <addr>", "Email address (forgot-password flow)")
-    .option("--tel <number>", "Telephone number (forgot-password flow)")
     .description(
-      "Change EACP account password via /api/eacp/v1/auth1/modifypassword (no token required)",
+      "Change EACP account password via /api/eacp/v1/auth1/modifypassword (no token required; --account defaults to current session). " +
+        "Forgot-password / vcode flow is not supported by this CLI — use the web console for password recovery.",
     )
     .action(
       async (
         url: string | undefined,
         opts: {
-          account: string;
+          account?: string;
           oldPassword?: string;
-          newPassword: string;
+          newPassword?: string;
           publicKeyFile?: string;
-          forget?: boolean;
-          vcodeUuid?: string;
-          vcode?: string;
-          email?: string;
-          tel?: string;
         },
       ) => {
         const globals = program.optsWithGlobals<{ baseUrl?: string }>();
         const baseUrl = normalizeBaseUrl(
           url?.trim() || globals.baseUrl?.trim() || resolveBaseUrl(),
         );
-        if (!opts.forget && !opts.oldPassword) {
-          console.error(chalk.red("--old-password is required (or use --forget for vcode flow)."));
-          process.exit(1);
-        }
-        if (opts.forget) {
-          if (!opts.vcodeUuid || !opts.vcode) {
-            console.error(chalk.red("--forget requires --vcode-uuid and --vcode."));
-            process.exit(1);
-          }
-          if (!opts.email && !opts.tel) {
-            console.error(chalk.red("--forget requires --email or --tel."));
-            process.exit(1);
-          }
-          if (opts.email && opts.tel) {
-            console.error(chalk.red("--forget: provide only one of --email / --tel."));
+
+        let account = opts.account?.trim();
+        if (!account) {
+          account = resolveCurrentAccount(getAdminDir());
+          if (!account) {
+            console.error(
+              chalk.red(
+                "Cannot determine account: no active session. Pass -u/--account, or run `kweaver-admin auth login` first.",
+              ),
+            );
             process.exit(1);
           }
         }
+
+        let oldPassword = opts.oldPassword;
+        let newPassword = opts.newPassword;
+        const json = wantsJsonOutput(program);
+
+        if (!oldPassword) {
+          if (json || !process.stdin.isTTY) {
+            console.error(
+              chalk.red(
+                "--old-password is required in non-interactive / --json mode.",
+              ),
+            );
+            process.exit(1);
+          }
+          oldPassword = await promptInput(`Old password for ${account}: `, { hidden: true });
+          if (!oldPassword) {
+            console.error(chalk.red("Old password cannot be empty."));
+            process.exit(1);
+          }
+        }
+
+        if (!newPassword) {
+          if (json || !process.stdin.isTTY) {
+            console.error(
+              chalk.red("--new-password is required in non-interactive / --json mode."),
+            );
+            process.exit(1);
+          }
+          const p1 = await promptInput("New password: ", { hidden: true });
+          if (!p1) {
+            console.error(chalk.red("New password cannot be empty."));
+            process.exit(1);
+          }
+          const p2 = await promptInput("Confirm new password: ", { hidden: true });
+          if (p1 !== p2) {
+            console.error(chalk.red("Passwords do not match."));
+            process.exit(1);
+          }
+          newPassword = p1;
+        }
+
         try {
           const pem = opts.publicKeyFile
             ? readFileSync(opts.publicKeyFile, "utf8").trim()
             : undefined;
           const result = await eacpModifyPassword(baseUrl, {
-            account: opts.account,
-            oldPassword: opts.oldPassword,
-            newPassword: opts.newPassword,
+            account,
+            oldPassword,
+            newPassword,
             publicKeyPem: pem,
-            isForgetPwd: opts.forget === true,
-            vcode:
-              opts.vcodeUuid && opts.vcode
-                ? { uuid: opts.vcodeUuid, code: opts.vcode }
-                : undefined,
-            emailAddress: opts.email,
-            telNumber: opts.tel,
           });
-          const json = wantsJsonOutput(program);
           if (json) {
             printJson({ status: result.status, ok: result.ok, body: result.json ?? result.body });
           }
@@ -447,7 +505,10 @@ export function registerAuthCommands(program: Command): void {
             process.exit(1);
           }
           if (!json) {
-            console.log(chalk.green(`Password changed for ${opts.account} on ${baseUrl}`));
+            console.log(chalk.green(`Password changed for ${account} on ${baseUrl}`));
+            console.error(
+              chalk.yellow("Next time you log in, use the new password (re-run `auth login`)."),
+            );
           }
         } catch (e) {
           console.error(chalk.red(`Change password failed: ${e instanceof Error ? e.message : String(e)}`));
