@@ -13,7 +13,12 @@ function client(program: Command): ApiClient {
 }
 
 export function registerAuditCommands(program: Command): void {
-  const audit = program.command("audit").description("Audit log queries");
+  const audit = program
+    .command("audit")
+    .description(
+      "Audit log queries (login events). Use --page/--size for paging and " +
+        "--user/--start/--end to filter; combine with global --json for raw output.",
+    );
 
   audit
     .command("list")

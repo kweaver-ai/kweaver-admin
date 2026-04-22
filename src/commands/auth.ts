@@ -192,7 +192,10 @@ function isNoBrowserLogin(opts: LoginOpts): boolean {
 export function registerAuthCommands(program: Command): void {
   const auth = program
     .command("auth")
-    .description("Authentication (tokens, status)");
+    .description(
+      "Authentication: login (browser/headless/password), session inspection " +
+        "(whoami, list, status, token), logout, and EACP password change.",
+    );
 
   auth
     .command("login")
@@ -216,7 +219,11 @@ export function registerAuthCommands(program: Command): void {
       "Do not open a browser; paste authorization code from stdin (headless servers)",
     )
     .description(
-      "Log in to platform (browser OAuth2 by default; -u/-p uses HTTP /oauth2/signin)",
+      "Log in to a platform. Modes: (1) browser OAuth2 with local callback (default); " +
+        "(2) --no-browser paste the redirect URL/code on a headless server; " +
+        "(3) -u/-p HTTP /oauth2/signin password login (RSA-encrypted); " +
+        "(4) --token attach an existing access token (CI). Tokens are saved per " +
+        "platform under ~/.kweaver-admin/platforms/<host>/token.json.",
     )
     .action(async (url: string | undefined, loginOpts: LoginOpts) => {
       const globals = program.optsWithGlobals<{ baseUrl?: string }>();

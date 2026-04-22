@@ -10,7 +10,13 @@ import { printJson } from "../utils/output";
 import { exitUserError } from "../utils/errors";
 
 export function registerConfigCommands(program: Command): void {
-  const cfg = program.command("config").description("CLI configuration file");
+  const cfg = program
+    .command("config")
+    .description(
+      "Inspect or update the global CLI config at ~/.kweaver-admin/config.json " +
+        "(currently only baseUrl). Per-platform tokens live separately under " +
+        "~/.kweaver-admin/platforms/<host>/token.json and are managed by `auth login/logout`.",
+    );
 
   cfg
     .command("show")
