@@ -109,7 +109,7 @@ kweaver-admin --base-url https://other.example/ user list
 - `auth logout` — 清除当前平台的本地令牌。
 - `auth status` — 查看 baseUrl、token 来源、TLS 模式和会话状态。
 - `auth whoami [url]` — 从保存的 `id_token` 解码当前身份。
-- `auth change-password [url]` — 通过 EACP 接口改密。已登录时 `-u/--account` 默认取当前会话身份（修改自己密码）；未传 `-o/-n` 时在 TTY 上隐藏式提示输入。也支持 `--forget` 验证码忘记密码流程。
+- `auth change-password [url]` — 通过 EACP 接口改密。已登录时 `-u/--account` 默认取当前会话身份（修改自己密码）；未传 `-o/-n` 时在 TTY 上隐藏式提示输入。CLI 不实现忘记密码 / 验证码流程，请到 Web 控制台找回密码。
 - `auth token` — 将当前 token 打印到 stdout（敏感信息）。
 
 ### `org`
