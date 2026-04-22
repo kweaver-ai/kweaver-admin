@@ -4,10 +4,8 @@ import type { Command } from "commander";
 import chalk from "chalk";
 import { describeAuthState, getAdminDir, resolveBaseUrl, resolveToken } from "../lib/auth";
 import { persistSessionAfterLogin } from "../lib/persist-login";
-import { eacpModifyPassword } from "../lib/eacp";
+import { eacpModifyPassword, fetchAccountByUserId, fetchEacpDisplayName } from "../lib/eacp";
 import { decodeJwtPayload } from "../lib/jwt";
-import { ApiClient } from "../lib/api-client";
-import { loadConfig } from "../lib/config";
 import {
   deleteToken,
   listPlatforms,
@@ -403,45 +401,13 @@ export function registerAuthCommands(program: Command): void {
       }
     });
 
-  /**
-   * Best-effort backend lookup: given a sub UUID, try to obtain the login
-   * name. Uses ShareMgnt `Usrm_GetUserInfo` (the same call `user get` uses)
-   * and walks a small set of known field names. Any error -> undefined.
-   */
-  async function lookupUsernameById(platform: string, userId: string): Promise<string | undefined> {
-    try {
-      const config = loadConfig();
-      const api = new ApiClient({ baseUrl: platform, config });
-      const raw = (await api.getUser(userId)) as unknown;
-      const candidates: Array<unknown> = [];
-      const visit = (v: unknown): void => {
-        if (!v || typeof v !== "object") return;
-        const obj = v as Record<string, unknown>;
-        for (const key of ["loginName", "login_name", "account", "name", "displayName"]) {
-          if (typeof obj[key] === "string" && (obj[key] as string).trim()) {
-            candidates.push(obj[key]);
-          }
-        }
-        for (const k of Object.keys(obj)) {
-          const child = obj[k];
-          if (child && typeof child === "object") visit(child);
-        }
-      };
-      visit(raw);
-      const first = candidates.find((c) => typeof c === "string" && (c as string).trim());
-      return typeof first === "string" ? first.trim() : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
   auth
     .command("whoami")
     .argument("[url]", "Platform URL (defaults to current)")
-    .option("--no-lookup", "Do not call backend to resolve username from sub UUID")
+    .option("--no-lookup", "Do not call /api/eacp/v1/user/get to resolve display name")
     .description(
       "Show current user identity. Resolves Username via id_token claims, " +
-        "access_token claims, persisted login name, and (optionally) a backend lookup by sub UUID.",
+        "access_token claims, persisted login name, and (optionally) a backend lookup via /api/eacp/v1/user/get.",
     )
     .action(async (urlArg: string | undefined, opts: { lookup?: boolean }) => {
       const json = wantsJsonOutput(program);
@@ -471,17 +437,22 @@ export function registerAuthCommands(program: Command): void {
       if (fromEnvOnly) {
         const accessToken = envTokenRaw!.replace(/^Bearer\s+/i, "");
         const payload = decodeJwtPayload(accessToken);
-        const sub = typeof payload?.sub === "string" ? payload.sub : undefined;
         let username: string | undefined;
         let usernameSource = "id_token";
         const fromJwt = payload?.preferred_username ?? payload?.name;
         if (typeof fromJwt === "string" && fromJwt.trim()) {
           username = fromJwt.trim();
-        } else if (tryLookup && sub) {
-          const looked = await lookupUsernameById(platform, sub).catch(() => undefined);
-          if (looked) {
-            username = looked;
-            usernameSource = "backend lookup";
+        } else if (tryLookup && accessToken) {
+          const eacp = await fetchEacpDisplayName(platform, accessToken);
+          if (eacp) {
+            username = eacp;
+            usernameSource = "eacp/user/get";
+          } else if (typeof payload?.sub === "string" && payload.sub) {
+            const um = await fetchAccountByUserId(platform, accessToken, payload.sub);
+            if (um) {
+              username = um;
+              usernameSource = "user-management/users";
+            }
           }
         }
         if (json) {
@@ -497,7 +468,11 @@ export function registerAuthCommands(program: Command): void {
         console.log(`Platform: ${platform}`);
         console.log(`Source:   env (KWEAVER_TOKEN / KWEAVER_ADMIN_TOKEN)`);
         if (payload) {
-          if (username) console.log(`Username: ${username}${usernameSource === "backend lookup" ? chalk.gray("  (resolved via backend)") : ""}`);
+          if (username) {
+            const tag =
+              usernameSource === "id_token" ? "" : chalk.gray(`  (${usernameSource})`);
+            console.log(`Username: ${username}${tag}`);
+          }
           console.log(`User ID:  ${payload.sub ?? "(unknown)"}`);
           console.log(`Issuer:   ${payload.iss ?? "(unknown)"}`);
           if (payload.iat) {
@@ -529,8 +504,12 @@ export function registerAuthCommands(program: Command): void {
       }
 
       let username: string | undefined;
-      let usernameSource: "id_token" | "access_token" | "persisted" | "backend lookup" =
-        "id_token";
+      let usernameSource:
+        | "id_token"
+        | "access_token"
+        | "persisted"
+        | "eacp/user/get"
+        | "user-management/users" = "id_token";
       const idClaim = payload.preferred_username ?? payload.name;
       if (typeof idClaim === "string" && idClaim.trim()) {
         username = idClaim.trim();
@@ -547,12 +526,29 @@ export function registerAuthCommands(program: Command): void {
         username = token.username.trim();
         usernameSource = "persisted";
       }
-      const sub = typeof payload.sub === "string" ? payload.sub : undefined;
-      if (!username && tryLookup && sub) {
-        const looked = await lookupUsernameById(platform, sub).catch(() => undefined);
-        if (looked) {
-          username = looked;
-          usernameSource = "backend lookup";
+      if (!username && tryLookup && token.accessToken) {
+        const eacp = await fetchEacpDisplayName(platform, token.accessToken, token.tlsInsecure);
+        if (eacp) {
+          username = eacp;
+          usernameSource = "eacp/user/get";
+        } else {
+          const sub = typeof payload.sub === "string" ? payload.sub : undefined;
+          if (sub) {
+            const um = await fetchAccountByUserId(
+              platform,
+              token.accessToken,
+              sub,
+              token.tlsInsecure,
+            );
+            if (um) {
+              username = um;
+              usernameSource = "user-management/users";
+            }
+          }
+        }
+        if (username) {
+          // Persist for subsequent commands (change-password, auth list, ...).
+          writeToken(adminDir, platform, { ...token, username });
         }
       }
 

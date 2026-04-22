@@ -6,6 +6,86 @@ import {
   type KeyObject,
 } from "node:crypto";
 import { normalizeBaseUrl } from "./oauth";
+import { runWithTlsInsecure } from "./tls";
+import { resolveDefaultUserManagementRole } from "./user-management-role";
+
+/**
+ * Best-effort fetch of the current user's display info via EACP ShareServer
+ * userinfo endpoint. Mirrors `kweaver-sdk` `fetchDisplayName`:
+ *
+ *   GET /api/eacp/v1/user/get
+ *   Authorization: Bearer <access_token>
+ *
+ * Returns the first non-empty of `account` / `name` / `mail`. Returns
+ * undefined on any error so callers can fall back gracefully.
+ */
+export async function fetchEacpDisplayName(
+  baseUrl: string,
+  accessToken: string,
+  tlsInsecure?: boolean,
+): Promise<string | undefined> {
+  try {
+    const url = `${normalizeBaseUrl(baseUrl)}/api/eacp/v1/user/get`;
+    const res = await runWithTlsInsecure(tlsInsecure === true, () =>
+      fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      }),
+    );
+    if (!res.ok) return undefined;
+    const info = (await res.json()) as Record<string, unknown>;
+    if (typeof info.account === "string" && info.account.trim()) return info.account.trim();
+    if (typeof info.name === "string" && info.name.trim()) return info.name.trim();
+    if (typeof info.mail === "string" && info.mail.trim()) return info.mail.trim();
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Best-effort lookup of an account/login name by user UUID via UserManagement
+ * public batch endpoint. Used as a fallback when EACP `user/get` is blocked
+ * by the per-product client filter (HTTP 401 from `ncEACUserHandler`).
+ *
+ *   GET /api/user-management/v1/users/<id>/account?role=<role>
+ *   -> [{ "account": "<loginName>", "id": "<uuid>", "type": "user" }]
+ *
+ * `:fields=account` is one of the public-only fields documented in
+ * `isf/UserManagement/driveradapters/user_rest_handler.go::handlerOutUserDBInfoRange`.
+ */
+export async function fetchAccountByUserId(
+  baseUrl: string,
+  accessToken: string,
+  userId: string,
+  tlsInsecure?: boolean,
+  role?: string,
+): Promise<string | undefined> {
+  try {
+    const qs = new URLSearchParams({ role: role ?? resolveDefaultUserManagementRole() });
+    const url = `${normalizeBaseUrl(baseUrl)}/api/user-management/v1/users/${encodeURIComponent(
+      userId,
+    )}/account?${qs.toString()}`;
+    const res = await runWithTlsInsecure(tlsInsecure === true, () =>
+      fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      }),
+    );
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as Array<{ account?: string; id?: string }> | unknown;
+    if (!Array.isArray(data)) return undefined;
+    const match = data.find((e) => e?.id === userId) ?? data[0];
+    const account = match?.account;
+    return typeof account === "string" && account.trim() ? account.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * 1024-bit RSA private key embedded in ShareServer
