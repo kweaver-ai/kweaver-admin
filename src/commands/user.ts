@@ -277,8 +277,12 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("roles")
-    .argument("<userId>", "User id")
-    .description("List roles for a user")
+    .argument("<userId>", "User UUID (find via `kweaver-admin user list`)")
+    .description(
+      "List roles currently granted to a user. " +
+        "GET /api/authorization/v1/users/<userId>/roles. Use the returned ROLE ID with " +
+        "`user assign-role` / `user revoke-role`.",
+    )
     .action(async (userId: string) => {
       const json = wantsJsonOutput(program);
       const c = client(program);
@@ -309,9 +313,14 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("assign-role")
-    .argument("<userId>", "User id")
-    .argument("<roleId>", "Role id")
-    .description("Assign an existing role to a user")
+    .argument("<userId>", "Target user UUID (find via `kweaver-admin user list`)")
+    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
+    .description(
+      "Grant one role to one user. Convenience wrapper around " +
+        "POST /api/authorization/v1/role-members/<roleId> with members=[{type:'user', id:<userId>}]. " +
+        "For batch / non-user members (department, group, app), use `kweaver-admin role add-member`. " +
+        "Example: kweaver-admin user assign-role 11111111-... 22222222-...",
+    )
     .action(async (userId: string, roleId: string) => {
       const json = wantsJsonOutput(program);
       const c = client(program);
@@ -451,9 +460,13 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("revoke-role")
-    .argument("<userId>", "User id")
-    .argument("<roleId>", "Role id")
-    .description("Revoke a role from a user")
+    .argument("<userId>", "Target user UUID (find via `kweaver-admin user list`)")
+    .argument("<roleId>", "Role UUID (find via `kweaver-admin user roles <userId>` or `role list`)")
+    .description(
+      "Revoke one role from one user. Convenience wrapper around " +
+        "DELETE /api/authorization/v1/role-members/<roleId> with members=[{type:'user', id:<userId>}]. " +
+        "For batch / non-user members, use `kweaver-admin role remove-member`.",
+    )
     .action(async (userId: string, roleId: string) => {
       const c = client(program);
       if (!c.hasToken()) {

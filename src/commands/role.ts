@@ -34,7 +34,12 @@ function parseInt0(value: string | undefined, fallback: number, label: string): 
 export function registerRoleCommands(program: Command): void {
   const role = program
     .command("role")
-    .description("Role management (Authorization service: /api/authorization/v1)");
+    .description(
+      "Role management against the Authorization service (/api/authorization/v1). " +
+        "Workflow: `role list` to find a role's UUID, then `role members <roleId>` to inspect, " +
+        "or `role add-member <roleId> --member <type>:<id>` to grant. " +
+        "For the common single-user case, `kweaver-admin user assign-role` is a shorter alias.",
+    );
 
   role
     .command("list")
@@ -45,7 +50,11 @@ export function registerRoleCommands(program: Command): void {
     .option("--keyword <text>", "Substring search on role name")
     .option("--offset <n>", "Pagination offset (default 0)")
     .option("--limit <n>", "Page size (default 100, max 1000)")
-    .description("List roles")
+    .description(
+      "List roles defined on the platform. The ROLE ID column is the UUID needed by " +
+        "`role members`, `role add-member`, `user assign-role`, etc. " +
+        "Source filter: system = built-in, business = product-defined, user = custom.",
+    )
     .action(
       async (opts: {
         source?: string[];
@@ -129,12 +138,16 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("members")
-    .argument("<roleId>", "Role id")
+    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
     .option("--type <type...>", "Filter by member type (user|department|group|app; repeatable)")
     .option("--keyword <text>", "Substring search on member name")
     .option("--offset <n>", "Pagination offset (default 0)")
     .option("--limit <n>", "Page size (default 100, max 1000)")
-    .description("List members of a role")
+    .description(
+      "List the users / departments / groups / apps that hold a role. " +
+        "GET /api/authorization/v1/role-members/<roleId>. " +
+        "Returned IDs can be passed to `role remove-member --member <type>:<id>`.",
+    )
     .action(
       async (
         roleId: string,
@@ -196,12 +209,19 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("add-member")
-    .argument("<roleId>", "Role id")
+    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
     .requiredOption(
       "--member <spec...>",
-      "Member spec '<type>:<id>' (type: user|department|group|app); repeatable",
+      "One or more members in '<type>:<id>' form. <type>: user | department | group | app. " +
+        "<id>: the corresponding UUID (user UUID from `user list`, dept UUID from `org list`, etc.). " +
+        "Pass multiple by repeating the flag or space-separating values. " +
+        "Example: --member user:11111111-1111-... user:22222222-... department:33333333-...",
     )
-    .description("Add one or more members to a role")
+    .description(
+      "Grant a role to one or more members (users, departments, groups, or apps) in a single call. " +
+        "POST /api/authorization/v1/role-members/<roleId>. " +
+        "For the common single-user case use `kweaver-admin user assign-role <userId> <roleId>`.",
+    )
     .action(async (roleId: string, opts: { member: string[] }) => {
       const c = client(program);
       if (!c.hasToken()) {
@@ -222,12 +242,17 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("remove-member")
-    .argument("<roleId>", "Role id")
+    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
     .requiredOption(
       "--member <spec...>",
-      "Member spec '<type>:<id>' (type: user|department|group|app); repeatable",
+      "Members to revoke in '<type>:<id>' form (same syntax as `role add-member`). " +
+        "Example: --member user:11111111-... department:22222222-...",
     )
-    .description("Remove one or more members from a role")
+    .description(
+      "Revoke a role from one or more members in a single call. " +
+        "DELETE /api/authorization/v1/role-members/<roleId>. " +
+        "For the single-user case use `kweaver-admin user revoke-role <userId> <roleId>`.",
+    )
     .action(async (roleId: string, opts: { member: string[] }) => {
       const c = client(program);
       if (!c.hasToken()) {
