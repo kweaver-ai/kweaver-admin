@@ -32,6 +32,33 @@ function parseInt0(value: string | undefined, fallback: number, label: string): 
   return n;
 }
 
+/** Shown after built-in help for `role add-member` / `role remove-member`. */
+const HELP_ROLE_MEMBER_EXAMPLES_ADD = [
+  "",
+  "How it works",
+  "  1) First argument: which role (exact role name, or role UUID).",
+  "  2) Required flag --member: who to add (repeat the flag, or list several values after one --member).",
+  "     Each value looks like  type:value",
+  "       user:         login name or user UUID",
+  "       department:   department UUID only",
+  "       group / app:  UUID only",
+  "",
+  "Examples",
+  "  kweaver-admin role add-member 数据管理员 --member user:admin",
+  "  kweaver-admin role add-member 应用管理员 --member user:alice user:bob",
+  "  kweaver-admin user assign-role admin 数据管理员",
+  "",
+  "Tip: one user + one role → `user assign-role <login> <role>` is shorter than `role add-member`.",
+].join("\n");
+
+const HELP_ROLE_MEMBER_EXAMPLES_REMOVE = [
+  "",
+  "Same rules as add-member: <role> then one or more --member type:value entries.",
+  "Examples",
+  "  kweaver-admin role remove-member 数据管理员 --member user:admin",
+  "  kweaver-admin user revoke-role admin 数据管理员",
+].join("\n");
+
 export function registerRoleCommands(program: Command): void {
   const role = program
     .command("role")
@@ -237,20 +264,20 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("add-member")
-    .argument("<role>", "Role UUID or exact role name.")
+    .summary("Add people (or depts/groups/apps) to a role; requires --member")
+    .argument("<role>", "Which role: exact name (e.g. 数据管理员) or role UUID")
     .requiredOption(
-      "--member <spec...>",
-      "One or more members in '<type>:<id-or-name>' form. <type>: user | department | group | app. " +
-        "For type=user the value can be the user UUID OR the account name (auto-resolved). " +
-        "For department/group/app pass the UUID. " +
-        "Pass multiple by repeating the flag or space-separating values. " +
-        "Example: --member user:admin user:cli-test-1 department:33333333-...",
+      "--member <type:value...>",
+      "Required. Who gets this role. Form: user:<login|uuid> or department|group|app:<uuid>. " +
+        "Repeat --member or pass several values after one --member.",
     )
     .description(
-      "Grant a role to one or more members (users, departments, groups, or apps) in a single call. " +
-        "The role argument accepts a UUID or exact role name; user members accept UUID or account. " +
-        "For one user and one role, `kweaver-admin user assign-role <user> <role>` is simpler.",
+      "Grant a role to one or more members in one request. " +
+        "You must pass --member (the CLI cannot guess who to add). " +
+        "For a single user + single role, prefer `kweaver-admin user assign-role <login> <role>`.",
     )
+    .addHelpText("after", HELP_ROLE_MEMBER_EXAMPLES_ADD)
+    .showHelpAfterError(true)
     .action(async (roleRef: string, opts: { member: string[] }) => {
       const c = client(program);
       if (!c.hasToken()) {
@@ -273,17 +300,19 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("remove-member")
-    .argument("<role>", "Role UUID or exact role name.")
+    .summary("Remove members from a role; requires --member")
+    .argument("<role>", "Which role: exact name or role UUID")
     .requiredOption(
-      "--member <spec...>",
-      "Members to revoke in '<type>:<id-or-name>' form (same syntax as `role add-member`). " +
-        "user:<account> is auto-resolved; other types require UUIDs. " +
-        "Example: --member user:admin department:22222222-...",
+      "--member <type:value...>",
+      "Required. Who loses this role (same type:value rules as add-member).",
     )
     .description(
-      "Revoke a role from one or more members in a single call. " +
-        "For one user and one role, `kweaver-admin user revoke-role <user> <role>` is simpler.",
+      "Revoke a role from one or more members in one request. " +
+        "You must pass --member. " +
+        "For one user + one role, prefer `kweaver-admin user revoke-role <login> <role>`.",
     )
+    .addHelpText("after", HELP_ROLE_MEMBER_EXAMPLES_REMOVE)
+    .showHelpAfterError(true)
     .action(async (roleRef: string, opts: { member: string[] }) => {
       const c = client(program);
       if (!c.hasToken()) {

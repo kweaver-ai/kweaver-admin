@@ -115,9 +115,10 @@ Validation:
 ### `role add-member <role>`
 
 - `<role>`: UUID **or** exact role name.
-- `--member <spec...>` (required): repeatable `'<type>:<id-or-name>'`.
+- `--member <type:value...>` (**required**): who receives the role. Omitting `--member` is invalid; run `role add-member --help` or invoke the command without `--member` and the CLI prints the same usage block with examples.
   - `user:<uuid>` or `user:<account>` (auto-resolved)
   - `department:<uuid>` / `group:<uuid>` / `app:<uuid>` (UUID only)
+- Prefer `user assign-role <login> <role>` when adding exactly one user to one role.
 
 Examples:
 
@@ -128,4 +129,4 @@ kweaver-admin role add-member 11111111-... --member user:11111111-... department
 
 ### `role remove-member <role>`
 
-- Same `<role>` and `--member` resolution rules as `add-member`.
+- Same `<role>` and `--member` resolution rules as `add-member`; `--member` is still required.
