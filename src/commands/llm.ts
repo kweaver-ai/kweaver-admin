@@ -84,13 +84,28 @@ export function registerLlmCommands(program: Command): void {
 
   llm
     .command("add")
+    .summary("Register an LLM; needs name, series, api-model, api-base, api-key")
     .requiredOption("--name <name>", "Model name")
     .requiredOption("--series <series>", "Model series")
     .requiredOption("--api-model <model>", "API model")
     .requiredOption("--api-base <url>", "API base URL")
     .requiredOption("--api-key <key>", "API key")
     .option("--icon <url>", "Icon URL")
-    .description("Add LLM model")
+    .description(
+      "Register a new large-language model. All five options above are required; optional --icon adds a logo URL.",
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Example (line breaks only for readability — type as one command):",
+        "  kweaver-admin llm add \\",
+        "    --name my-gpt --series default \\",
+        "    --api-model gpt-4o --api-base https://api.example.com/v1 \\",
+        "    --api-key sk-your-key-here",
+      ].join("\n"),
+    )
+    .showHelpAfterError(true)
     .action(
       async (opts: {
         name: string;

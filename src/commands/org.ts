@@ -106,7 +106,7 @@ export function registerOrgCommands(program: Command): void {
       `
 Notes:
   • --role  Required on most subcommands: use a role your account is allowed (e.g. org_manager or normal_user if you are not admin).
-  • APIs   list/tree use search. get/members read data. create/update/delete call extra "management" routes — many clusters disable them; HTTP 4xx often means "feature off on this server", not a broken CLI.
+  • Behavior  list/tree search the directory. get/members read details. create/update/delete need extra permissions — many clusters turn these off; HTTP 4xx often means "feature disabled here", not a broken CLI.
 `,
     );
 
@@ -185,8 +185,8 @@ Notes:
         let hint = "";
         if (/404|not found/i.test(msg)) {
           hint =
-            "\n\nHint: GET /api/user-management/v1/departments/:id may be unregistered on this deployment; " +
-            "`org list` / `org tree` still work via search. Use an id from `org list`.";
+            "\n\nHint: this deployment may not expose single-department fetch by id. " +
+            "Confirm the id exists with `org list` / `org tree` and copy it from there.";
         }
         if (
           id === "-1" &&
@@ -205,6 +205,7 @@ Notes:
 
   org
     .command("create")
+    .summary("Create a department; requires --name")
     .requiredOption("--name <name>", "New department name")
     .option("--parent <id>", "Parent department id (defaults to root '-1')")
     .option("--manager <userId>", "Responsible person user id")
@@ -214,9 +215,20 @@ Notes:
     .option("--status <n>", "Status (1 = enabled, 0 = disabled; default 1)")
     .option("--oss-id <id>", "OSS bucket id")
     .description(
-      "Create a department via ISFWeb ShareMgnt.Usrm_AddDepartment thrift " +
-        "(UserManagement REST has no POST route).",
+      "Create a department. Some clusters disable this from the CLI; an HTTP 4xx often means the feature is off, not a bad command.",
     )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Minimal example",
+        "  kweaver-admin org create --name \"R&D\"",
+        "",
+        "With a parent (get ids from `org list`):",
+        "  kweaver-admin org create --name SubTeam --parent <parent-id>",
+      ].join("\n"),
+    )
+    .showHelpAfterError(true)
     .action(
       async (opts: {
         name: string;
@@ -261,8 +273,7 @@ Notes:
     .option("--status <n>", "Status (1 = enabled, 0 = disabled)")
     .option("--oss-id <id>", "OSS bucket id")
     .description(
-      "Update a department via ISFWeb ShareMgnt.Usrm_EditDepartment thrift " +
-        "(UserManagement REST has no PATCH route).",
+      "Update a department. Some clusters disable this from the CLI; HTTP 4xx may mean the feature is off.",
     )
     .action(
       async (

@@ -93,9 +93,10 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("create")
+    .summary("Create a user; requires --login")
     .requiredOption(
       "--login <loginName>",
-      "Login name (unique). Used for sign-in; corresponds to ShareMgnt.loginName",
+      "Unique sign-in account (login name) for the new user",
     )
     .option(
       "--display-name <name>",
@@ -110,7 +111,7 @@ export function registerUserCommands(program: Command): void {
       "--csf-level <n>",
       "Confidentiality level (密级). Valid values are deployment-specific and " +
         "configured in UserManagement's csf_level_enum. " +
-        "(default: omitted; ShareMgnt chooses/initializes a default. " +
+        "(default: omitted; the server picks a default. " +
         "Set env KWEAVER_ADMIN_CSF_LEVEL to force a value globally.)",
     )
     .option(
@@ -123,10 +124,20 @@ export function registerUserCommands(program: Command): void {
     .option("--position <pos>", "Position / job title (optional)")
     .option("--remark <text>", "Free-form remark (optional)")
     .description(
-      "Create a platform user (via ISFWeb ShareMgnt.Usrm_AddUser thrift call). " +
-        "Initial password is the platform default '123456' — user must change it on first login. " +
-        "To set a custom password immediately, use `kweaver-admin user reset-password -u <login> -p ...`.",
+      "Create a platform user. Initial password is the platform default '123456' until first login. " +
+        "To set a different password right away: `kweaver-admin user reset-password -u <login> -p ...`.",
     )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Minimal example",
+        "  kweaver-admin user create --login jdupont --display-name \"Jean Dupont\"",
+        "",
+        "Only --login is required; other fields are optional. Use `org list` for department ids (--department).",
+      ].join("\n"),
+    )
+    .showHelpAfterError(true)
     .action(
       async (opts: {
         login: string;
@@ -202,8 +213,7 @@ export function registerUserCommands(program: Command): void {
     .option("--csf-level2 <n>", "Secondary confidentiality level")
     .option("--expire-time <n>", "Account expire time (epoch seconds; -1 for never)")
     .description(
-      "Update mutable user fields. Uses REST PATCH when available; falls back to " +
-        "ISFWeb ShareMgnt.Usrm_EditUser thrift call (same payload as the console).",
+      "Update mutable user fields for an existing user (same fields as the admin console).",
     )
     .action(async (id: string, opts: {
       displayName?: string;

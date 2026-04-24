@@ -84,6 +84,7 @@ export function registerSmallModelCommands(program: Command): void {
 
   sm
     .command("add")
+    .summary("Register a small model; needs name, type, api-url, api-model")
     .requiredOption("--name <name>", "Model name")
     .requiredOption("--type <type>", "Type: embedding|reranker")
     .requiredOption("--api-url <url>", "API URL")
@@ -92,7 +93,21 @@ export function registerSmallModelCommands(program: Command): void {
     .option("--batch-size <n>", "Batch size", "2048")
     .option("--max-tokens <n>", "Max tokens", "512")
     .option("--embedding-dim <n>", "Embedding dimension", "768")
-    .description("Add small model")
+    .description(
+      "Register a small model (embedding or reranker). --name, --type, --api-url, and --api-model are required; other flags have defaults.",
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Example:",
+        "  kweaver-admin small-model add \\",
+        "    --name my-emb --type embedding \\",
+        "    --api-url https://api.example.com/v1/embeddings \\",
+        "    --api-model text-embedding-3-small",
+      ].join("\n"),
+    )
+    .showHelpAfterError(true)
     .action(
       async (opts: {
         name: string;
