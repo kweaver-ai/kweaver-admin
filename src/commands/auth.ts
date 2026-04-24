@@ -414,13 +414,13 @@ export function registerAuthCommands(program: Command): void {
     .argument("[url]", "Platform URL (defaults to current)")
     .option(
       "--no-lookup",
-      "Skip backend HTTP fallback (eacp/user/get + user-management/users/<sub>/account)",
+      "Skip optional server lookups when resolving the display name (JWT and saved token only)",
     )
     .description(
-      "Show current user identity. Username resolution: id_token -> access_token -> " +
-        "persisted token.username -> GET /api/eacp/v1/user/get -> " +
-        "GET /api/user-management/v1/users/<sub>/account?role=. " +
-        "Successful backend lookups are persisted back to token.json.",
+      "Show current user identity. " +
+        "Resolves the display name from tokens first, then optional server lookups if still unknown; " +
+        "successful lookups are saved in token.json for later commands. " +
+        "Use --json to see `usernameSource` for debugging.",
     )
     .action(async (urlArg: string | undefined, opts: { lookup?: boolean }) => {
       const json = wantsJsonOutput(program);
@@ -661,10 +661,10 @@ export function registerAuthCommands(program: Command): void {
     .option("-n, --new-password <password>", "New password (prompted on TTY if omitted)")
     .option("--public-key-file <path>", "Override RSA public key (PEM) for password encryption")
     .description(
-      "Change EACP account password via /api/eacp/v1/auth1/modifypassword. " +
+      "Change the logged-in account password on the platform (EACP). " +
         "No admin token required; honors the platform's tlsInsecure flag. " +
         "Locally saved access_token keeps working after the change; only refresh_token may be revoked depending on backend policy. " +
-        "Forgot-password / vcode flow is not supported by this CLI — use the web console for password recovery.",
+        "Forgot-password / verification-code recovery is not supported here — use the web console.",
     )
     .action(
       async (

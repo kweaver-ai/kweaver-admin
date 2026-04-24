@@ -283,10 +283,8 @@ export function registerUserCommands(program: Command): void {
     )
     .description(
       "List roles currently granted to a user. " +
-        "Accepts a user UUID or account name; names are resolved via " +
-        "`/api/user-management/v1/console/search-users/account`. " +
-        "GET /api/authorization/v1/users/<userId>/roles. Use the returned ROLE ID with " +
-        "`user assign-role` / `user revoke-role`.",
+        "Accepts a user UUID or account (login) name; non-UUID values are looked up automatically. " +
+        "Use the ROLE ID column with `user assign-role` / `user revoke-role` (or pass the exact role name there).",
     )
     .action(async (userRef: string) => {
       const json = wantsJsonOutput(program);
@@ -328,13 +326,10 @@ export function registerUserCommands(program: Command): void {
       "Role UUID or exact role name (e.g. '数据管理员'). Names must match exactly; pass the UUID if there are duplicates.",
     )
     .description(
-      "Grant one role to one user. Convenience wrapper around " +
-        "POST /api/authorization/v1/role-members/<roleId> with members=[{type:'user', id:<userId>}]. " +
-        "Both arguments accept either a UUID or a name; names are resolved via " +
-        "search-users (account) and listRoles (exact name match). " +
-        "For batch / non-user members (department, group, app), use `kweaver-admin role add-member`. " +
-        "Examples: " +
-        "kweaver-admin user assign-role admin 数据管理员 | " +
+      "Grant one role to one user. " +
+        "Both arguments accept either a UUID or a name: user as account/login, role as exact display name (ambiguous names error out — use the UUID from `role list`). " +
+        "For batch or non-user members (department, group, app), use `kweaver-admin role add-member`. " +
+        "Examples: kweaver-admin user assign-role admin 数据管理员 | " +
         "kweaver-admin user assign-role 11111111-... 22222222-...",
     )
     .action(async (userRef: string, roleRef: string) => {
@@ -489,10 +484,9 @@ export function registerUserCommands(program: Command): void {
       "Role UUID or exact role name. Find via `kweaver-admin user roles <user>` or `role list`.",
     )
     .description(
-      "Revoke one role from one user. Convenience wrapper around " +
-        "DELETE /api/authorization/v1/role-members/<roleId> with members=[{type:'user', id:<userId>}]. " +
-        "Both arguments accept UUIDs or names. " +
-        "For batch / non-user members, use `kweaver-admin role remove-member`.",
+      "Revoke one role from one user. " +
+        "Same UUID-or-name rules as `user assign-role`. " +
+        "For batch or non-user members, use `kweaver-admin role remove-member`.",
     )
     .action(async (userRef: string, roleRef: string) => {
       const c = client(program);

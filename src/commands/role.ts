@@ -36,10 +36,10 @@ export function registerRoleCommands(program: Command): void {
   const role = program
     .command("role")
     .description(
-      "Role management against the Authorization service (/api/authorization/v1). " +
-        "Workflow: `role list` to find a role's UUID, then `role members <roleId>` to inspect, " +
-        "or `role add-member <roleId> --member <type>:<id>` to grant. " +
-        "For the common single-user case, `kweaver-admin user assign-role` is a shorter alias.",
+      "Role management (platform authorization). " +
+        "Workflow: `role list` to find a role id, then `role members <role>` to inspect, " +
+        "or `role add-member <role> --member <type>:<id>` to grant. " +
+        "For assigning one role to one user, `kweaver-admin user assign-role` is shorter.",
     );
 
   role
@@ -117,8 +117,7 @@ export function registerRoleCommands(program: Command): void {
     .option("--view <mode>", "resource_type_view_mode: flat (default) | hierarchy")
     .description(
       "Show a role's details (resource type scopes, operations). " +
-        "Accepts a UUID or exact role name; names resolve via " +
-        "`/api/authorization/v1/roles?keyword=...`.",
+        "Accepts a UUID or exact role name.",
     )
     .action(async (roleRef: string, opts: { view?: string }) => {
       const c = client(program);
@@ -150,9 +149,8 @@ export function registerRoleCommands(program: Command): void {
     .option("--offset <n>", "Pagination offset (default 0)")
     .option("--limit <n>", "Page size (default 100, max 1000)")
     .description(
-      "List the users / departments / groups / apps that hold a role. " +
-        "GET /api/authorization/v1/role-members/<roleId>. " +
-        "Returned IDs can be passed to `role remove-member --member <type>:<id>`.",
+      "List the users, departments, groups, and apps that hold a role. " +
+        "Returned member IDs work with `role remove-member --member <type>:<id>`.",
     )
     .action(
       async (
@@ -250,9 +248,8 @@ export function registerRoleCommands(program: Command): void {
     )
     .description(
       "Grant a role to one or more members (users, departments, groups, or apps) in a single call. " +
-        "POST /api/authorization/v1/role-members/<roleId>. " +
-        "Role accepts UUID or exact name; user members accept UUID or account. " +
-        "For the common single-user case use `kweaver-admin user assign-role <user> <role>`.",
+        "The role argument accepts a UUID or exact role name; user members accept UUID or account. " +
+        "For one user and one role, `kweaver-admin user assign-role <user> <role>` is simpler.",
     )
     .action(async (roleRef: string, opts: { member: string[] }) => {
       const c = client(program);
@@ -285,8 +282,7 @@ export function registerRoleCommands(program: Command): void {
     )
     .description(
       "Revoke a role from one or more members in a single call. " +
-        "DELETE /api/authorization/v1/role-members/<roleId>. " +
-        "For the single-user case use `kweaver-admin user revoke-role <user> <role>`.",
+        "For one user and one role, `kweaver-admin user revoke-role <user> <role>` is simpler.",
     )
     .action(async (roleRef: string, opts: { member: string[] }) => {
       const c = client(program);
