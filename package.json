@@ -1,6 +1,6 @@
 {
   "name": "@kweaver-ai/kweaver-admin",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "CLI tool for KWeaver administrators",
   "type": "module",
   "bin": {
