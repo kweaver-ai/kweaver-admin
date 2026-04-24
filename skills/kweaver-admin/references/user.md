@@ -56,19 +56,33 @@ Behavior:
 - Deletes one user id.
 - CLI does not add a confirmation prompt here.
 
-## `user roles <userId>`
+## `user roles <user>`
 
+- `<user>`: user UUID **or** account/login name (auto-resolved via
+  `console/search-users/account`).
 - Lists assigned roles.
 - On deployments where `accessor_roles` is private, CLI falls back to
   `list roles + role members` matching.
 
-## `user assign-role <userId> <roleId>`
+## `user assign-role <user> <role>`
 
-- Adds one role to one user.
+- `<user>`: UUID or account name.
+- `<role>`: UUID or **exact** role name (e.g. `数据管理员`). Substring/duplicate
+  matches are rejected; pass the UUID instead.
+- Convenience wrapper around `POST /api/authorization/v1/role-members/<roleId>`
+  with `members=[{type:'user', id:<userId>}]`.
 
-## `user revoke-role <userId> <roleId>`
+Examples:
 
-- Removes one role from one user.
+```bash
+kweaver-admin user assign-role admin 数据管理员
+kweaver-admin user assign-role 6b39db6c-... 00990824-...
+```
+
+## `user revoke-role <user> <role>`
+
+- Same name/UUID resolution as `assign-role`.
+- `DELETE /api/authorization/v1/role-members/<roleId>` with the same body shape.
 
 ## `user reset-password`
 

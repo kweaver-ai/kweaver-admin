@@ -6,6 +6,7 @@ import { resolveCliBaseUrl } from "../lib/resolve-cli-base-url";
 import { wantsJsonOutput } from "../lib/cli-json";
 import { printColumns, printJson } from "../utils/output";
 import { exitUserError } from "../utils/errors";
+import { resolveRoleId, resolveUserId } from "../lib/resolve-refs";
 
 function client(program: Command): ApiClient {
   const config = loadConfig();
@@ -112,10 +113,14 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("get")
-    .argument("<id>", "Role id")
+    .argument("<role>", "Role UUID or exact role name")
     .option("--view <mode>", "resource_type_view_mode: flat (default) | hierarchy")
-    .description("Show a role's details (resource type scopes, operations)")
-    .action(async (id: string, opts: { view?: string }) => {
+    .description(
+      "Show a role's details (resource type scopes, operations). " +
+        "Accepts a UUID or exact role name; names resolve via " +
+        "`/api/authorization/v1/roles?keyword=...`.",
+    )
+    .action(async (roleRef: string, opts: { view?: string }) => {
       const c = client(program);
       if (!c.hasToken()) {
         exitUserError(
@@ -127,6 +132,7 @@ export function registerRoleCommands(program: Command): void {
         exitUserError("--view must be 'flat' or 'hierarchy'");
       }
       try {
+        const id = await resolveRoleId(c, roleRef);
         const data = await c.getRole(id, {
           resourceTypeViewMode: view as "flat" | "hierarchy" | undefined,
         });
@@ -138,7 +144,7 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("members")
-    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
+    .argument("<role>", "Role UUID or exact role name (e.g. '数据管理员').")
     .option("--type <type...>", "Filter by member type (user|department|group|app; repeatable)")
     .option("--keyword <text>", "Substring search on member name")
     .option("--offset <n>", "Pagination offset (default 0)")
@@ -150,7 +156,7 @@ export function registerRoleCommands(program: Command): void {
     )
     .action(
       async (
-        roleId: string,
+        roleRef: string,
         opts: { type?: string[]; keyword?: string; offset?: string; limit?: string },
       ) => {
         const json = wantsJsonOutput(program);
@@ -161,6 +167,7 @@ export function registerRoleCommands(program: Command): void {
           );
         }
         try {
+          const roleId = await resolveRoleId(c, roleRef);
           const types = (opts.type ?? []).map((t) => {
             if (!VALID_MEMBER_TYPES.has(t)) {
               throw new Error(`--type must be one of user|department|group|app (got '${t}')`);
@@ -194,35 +201,60 @@ export function registerRoleCommands(program: Command): void {
       },
     );
 
-  function parseMemberSpec(spec: string): { id: string; type: MemberType } {
+  function parseMemberSpec(spec: string): { ref: string; type: MemberType } {
     const idx = spec.indexOf(":");
     if (idx <= 0 || idx === spec.length - 1) {
-      throw new Error(`Invalid --member '${spec}': expected '<type>:<id>'`);
+      throw new Error(`Invalid --member '${spec}': expected '<type>:<id-or-name>'`);
     }
     const type = spec.slice(0, idx);
-    const id = spec.slice(idx + 1);
+    const ref = spec.slice(idx + 1);
     if (!VALID_MEMBER_TYPES.has(type)) {
       throw new Error(`--member type must be one of user|department|group|app (got '${type}')`);
     }
-    return { id, type: type as MemberType };
+    return { ref, type: type as MemberType };
   }
+
+  /**
+   * Turn a parsed `<type>:<ref>` into the `{type,id}` shape the API wants.
+   * `user:<account>` is resolved via the search-users endpoint; other
+   * non-UUID names are not auto-resolved (no public lookup) — pass UUIDs.
+   */
+  async function resolveMemberRef(
+    c: ApiClient,
+    parsed: { ref: string; type: MemberType },
+  ): Promise<{ id: string; type: MemberType }> {
+    const { ref, type } = parsed;
+    if (UUID_LIKE.test(ref.trim())) return { id: ref.trim(), type };
+    if (type === "user") {
+      const id = await resolveUserId(c, ref);
+      return { id, type };
+    }
+    throw new Error(
+      `--member ${type}:${ref}: only user names are auto-resolved. ` +
+        `Pass a UUID for ${type} members (find via the matching list command).`,
+    );
+  }
+
+  const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   role
     .command("add-member")
-    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
+    .argument("<role>", "Role UUID or exact role name.")
     .requiredOption(
       "--member <spec...>",
-      "One or more members in '<type>:<id>' form. <type>: user | department | group | app. " +
-        "<id>: the corresponding UUID (user UUID from `user list`, dept UUID from `org list`, etc.). " +
+      "One or more members in '<type>:<id-or-name>' form. <type>: user | department | group | app. " +
+        "For type=user the value can be the user UUID OR the account name (auto-resolved). " +
+        "For department/group/app pass the UUID. " +
         "Pass multiple by repeating the flag or space-separating values. " +
-        "Example: --member user:11111111-1111-... user:22222222-... department:33333333-...",
+        "Example: --member user:admin user:cli-test-1 department:33333333-...",
     )
     .description(
       "Grant a role to one or more members (users, departments, groups, or apps) in a single call. " +
         "POST /api/authorization/v1/role-members/<roleId>. " +
-        "For the common single-user case use `kweaver-admin user assign-role <userId> <roleId>`.",
+        "Role accepts UUID or exact name; user members accept UUID or account. " +
+        "For the common single-user case use `kweaver-admin user assign-role <user> <role>`.",
     )
-    .action(async (roleId: string, opts: { member: string[] }) => {
+    .action(async (roleRef: string, opts: { member: string[] }) => {
       const c = client(program);
       if (!c.hasToken()) {
         exitUserError(
@@ -230,7 +262,9 @@ export function registerRoleCommands(program: Command): void {
         );
       }
       try {
-        const members = opts.member.map(parseMemberSpec);
+        const roleId = await resolveRoleId(c, roleRef);
+        const parsed = opts.member.map(parseMemberSpec);
+        const members = await Promise.all(parsed.map((m) => resolveMemberRef(c, m)));
         await c.modifyRoleMembers(roleId, "POST", members);
         console.log(
           chalk.green(`Added ${members.length} member(s) to role ${roleId}`),
@@ -242,18 +276,19 @@ export function registerRoleCommands(program: Command): void {
 
   role
     .command("remove-member")
-    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
+    .argument("<role>", "Role UUID or exact role name.")
     .requiredOption(
       "--member <spec...>",
-      "Members to revoke in '<type>:<id>' form (same syntax as `role add-member`). " +
-        "Example: --member user:11111111-... department:22222222-...",
+      "Members to revoke in '<type>:<id-or-name>' form (same syntax as `role add-member`). " +
+        "user:<account> is auto-resolved; other types require UUIDs. " +
+        "Example: --member user:admin department:22222222-...",
     )
     .description(
       "Revoke a role from one or more members in a single call. " +
         "DELETE /api/authorization/v1/role-members/<roleId>. " +
-        "For the single-user case use `kweaver-admin user revoke-role <userId> <roleId>`.",
+        "For the single-user case use `kweaver-admin user revoke-role <user> <role>`.",
     )
-    .action(async (roleId: string, opts: { member: string[] }) => {
+    .action(async (roleRef: string, opts: { member: string[] }) => {
       const c = client(program);
       if (!c.hasToken()) {
         exitUserError(
@@ -261,7 +296,9 @@ export function registerRoleCommands(program: Command): void {
         );
       }
       try {
-        const members = opts.member.map(parseMemberSpec);
+        const roleId = await resolveRoleId(c, roleRef);
+        const parsed = opts.member.map(parseMemberSpec);
+        const members = await Promise.all(parsed.map((m) => resolveMemberRef(c, m)));
         await c.modifyRoleMembers(roleId, "DELETE", members);
         console.log(
           chalk.green(`Removed ${members.length} member(s) from role ${roleId}`),

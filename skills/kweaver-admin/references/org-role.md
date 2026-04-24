@@ -72,10 +72,21 @@ Behavior:
 
 ## Role
 
+### Name vs UUID resolution
+
+Every command that takes a `<role>` or `<user>` argument accepts **either**:
+
+- a UUID (used as-is), or
+- a human-readable name:
+  - **user names** resolve via `GET /api/user-management/v1/console/search-users/account?account=<name>` — the value should be the user's `account` (login name).
+  - **role names** resolve via `GET /api/authorization/v1/roles?keyword=<name>` and require an **exact** match. Substring or duplicate matches are rejected with the candidate list so the CLI never silently picks one.
+
+For `role add-member` / `remove-member`, only `--member user:<account>` is auto-resolved. `department:` / `group:` / `app:` still require UUIDs (no public name lookup).
+
 ### `role list`
 
 - `--source <source...>`: `system|business|user`.
-- `--keyword <text>`
+- `--keyword <text>` (substring; for assignment commands you usually want the exact name instead)
 - `--offset <n>`: default `0`
 - `--limit <n>`: default `100`
 
@@ -83,39 +94,38 @@ Validation:
 
 - invalid source values are rejected by CLI before request.
 
-### `role get <id>`
+### `role get <role>`
 
+- `<role>`: UUID **or** exact role name.
 - `--view <mode>`: `flat` or `hierarchy`.
 
 Validation:
 
-- CLI rejects other values.
+- CLI rejects other `--view` values.
+- Role name resolved as described above; ambiguous/missing → exit with error.
 
-### `role members <roleId>`
+### `role members <role>`
 
+- `<role>`: UUID **or** exact role name.
 - `--type <type...>`: `user|department|group|app`.
 - `--keyword <text>`
 - `--offset <n>`: default `0`
 - `--limit <n>`: default `100`
 
-Validation:
+### `role add-member <role>`
 
-- invalid `--type` values are rejected by CLI before request.
+- `<role>`: UUID **or** exact role name.
+- `--member <spec...>` (required): repeatable `'<type>:<id-or-name>'`.
+  - `user:<uuid>` or `user:<account>` (auto-resolved)
+  - `department:<uuid>` / `group:<uuid>` / `app:<uuid>` (UUID only)
 
-### `role add-member <roleId>`
+Examples:
 
-- `--member <spec...>` (required): repeatable member spec
-  `'<type>:<id>'`, where type is `user|department|group|app`.
+```bash
+kweaver-admin role add-member 数据管理员 --member user:admin user:cli-test-1
+kweaver-admin role add-member 11111111-... --member user:11111111-... department:33333333-...
+```
 
-Validation:
+### `role remove-member <role>`
 
-- spec must contain exactly one leading `<type>:` prefix with non-empty id.
-
-### `role remove-member <roleId>`
-
-- `--member <spec...>` (required): repeatable member spec
-  `'<type>:<id>'`, where type is `user|department|group|app`.
-
-Validation:
-
-- same member spec rules as `add-member`.
+- Same `<role>` and `--member` resolution rules as `add-member`.

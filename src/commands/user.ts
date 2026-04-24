@@ -7,7 +7,7 @@ import { printColumns, printJson } from "../utils/output";
 import { exitUserError } from "../utils/errors";
 import { wantsJsonOutput } from "../lib/cli-json";
 import { confirm, promptInput } from "../utils/prompt";
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { resolveRoleId, resolveUserId, UUID_RE } from "../lib/resolve-refs";
 
 /** Initial password assigned by the platform on user creation; also the value
  * used by `user reset-password` when `--password` is not supplied. */
@@ -277,13 +277,18 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("roles")
-    .argument("<userId>", "User UUID (find via `kweaver-admin user list`)")
+    .argument(
+      "<user>",
+      "User UUID or account/login name (e.g. 'admin' or 'cli-test-...').",
+    )
     .description(
       "List roles currently granted to a user. " +
+        "Accepts a user UUID or account name; names are resolved via " +
+        "`/api/user-management/v1/console/search-users/account`. " +
         "GET /api/authorization/v1/users/<userId>/roles. Use the returned ROLE ID with " +
         "`user assign-role` / `user revoke-role`.",
     )
-    .action(async (userId: string) => {
+    .action(async (userRef: string) => {
       const json = wantsJsonOutput(program);
       const c = client(program);
       if (!c.hasToken()) {
@@ -292,6 +297,7 @@ export function registerUserCommands(program: Command): void {
         );
       }
       try {
+        const userId = await resolveUserId(c, userRef);
         const data = (await c.getUserRoles(userId)) as
           | { entries?: Array<{ id: string; name?: string; description?: string }>; total_count?: number }
           | unknown[];
@@ -313,15 +319,25 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("assign-role")
-    .argument("<userId>", "Target user UUID (find via `kweaver-admin user list`)")
-    .argument("<roleId>", "Role UUID (find via `kweaver-admin role list`)")
+    .argument(
+      "<user>",
+      "User UUID or account/login name (resolved via `user list`-style search).",
+    )
+    .argument(
+      "<role>",
+      "Role UUID or exact role name (e.g. '数据管理员'). Names must match exactly; pass the UUID if there are duplicates.",
+    )
     .description(
       "Grant one role to one user. Convenience wrapper around " +
         "POST /api/authorization/v1/role-members/<roleId> with members=[{type:'user', id:<userId>}]. " +
+        "Both arguments accept either a UUID or a name; names are resolved via " +
+        "search-users (account) and listRoles (exact name match). " +
         "For batch / non-user members (department, group, app), use `kweaver-admin role add-member`. " +
-        "Example: kweaver-admin user assign-role 11111111-... 22222222-...",
+        "Examples: " +
+        "kweaver-admin user assign-role admin 数据管理员 | " +
+        "kweaver-admin user assign-role 11111111-... 22222222-...",
     )
-    .action(async (userId: string, roleId: string) => {
+    .action(async (userRef: string, roleRef: string) => {
       const json = wantsJsonOutput(program);
       const c = client(program);
       if (!c.hasToken()) {
@@ -330,6 +346,10 @@ export function registerUserCommands(program: Command): void {
         );
       }
       try {
+        const [userId, roleId] = await Promise.all([
+          resolveUserId(c, userRef),
+          resolveRoleId(c, roleRef),
+        ]);
         await c.assignRole(userId, roleId);
         if (json) return printJson({ ok: true, userId, roleId, action: "assigned" });
         console.log(chalk.green(`Assigned role ${roleId} to user ${userId}`));
@@ -460,14 +480,21 @@ export function registerUserCommands(program: Command): void {
 
   user
     .command("revoke-role")
-    .argument("<userId>", "Target user UUID (find via `kweaver-admin user list`)")
-    .argument("<roleId>", "Role UUID (find via `kweaver-admin user roles <userId>` or `role list`)")
+    .argument(
+      "<user>",
+      "User UUID or account/login name (e.g. 'admin').",
+    )
+    .argument(
+      "<role>",
+      "Role UUID or exact role name. Find via `kweaver-admin user roles <user>` or `role list`.",
+    )
     .description(
       "Revoke one role from one user. Convenience wrapper around " +
         "DELETE /api/authorization/v1/role-members/<roleId> with members=[{type:'user', id:<userId>}]. " +
+        "Both arguments accept UUIDs or names. " +
         "For batch / non-user members, use `kweaver-admin role remove-member`.",
     )
-    .action(async (userId: string, roleId: string) => {
+    .action(async (userRef: string, roleRef: string) => {
       const c = client(program);
       if (!c.hasToken()) {
         exitUserError(
@@ -475,6 +502,10 @@ export function registerUserCommands(program: Command): void {
         );
       }
       try {
+        const [userId, roleId] = await Promise.all([
+          resolveUserId(c, userRef),
+          resolveRoleId(c, roleRef),
+        ]);
         await c.revokeRole(userId, roleId);
         console.log(chalk.green(`Revoked role ${roleId} from user ${userId}`));
       } catch (e) {
